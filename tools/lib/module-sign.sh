@@ -52,20 +52,43 @@ r610_sign_file_path() {
     printf '%s\n' "${R610_SIGN_FILE:-/usr/src/kernels/$(r610_kver)/scripts/sign-file}"
 }
 
+r610_akmods_root() {
+    printf '%s\n' "${R610_AKMODS_ROOT:-/etc/pki/akmods}"
+}
+
+# fedora_<id> from a fedora_*.priv / fedora_*.der path. Empty otherwise.
+r610_fedora_mok_stem() {
+    local base
+    base="$(basename -- "${1:-}")"
+    case "$base" in
+        fedora_*.priv) printf '%s\n' "${base%.priv}" ;;
+        fedora_*.der)  printf '%s\n' "${base%.der}" ;;
+    esac
+}
+
 # Candidate private-key paths. First readable match wins.
+# Prefer matching fedora_<id>.priv over generic akmods/DKMS/shim names.
 # Do not cat these files.
 r610_mok_key_candidates() {
     if [ -n "${R610_MOK_KEY:-}" ]; then
         printf '%s\n' "$R610_MOK_KEY"
         return 0
     fi
+    local root g
+    root="$(r610_akmods_root)"
+    for g in "$root/private"/fedora_*.priv; do
+        [ -e "$g" ] || continue
+        printf '%s\n' "$g"
+    done
     printf '%s\n' \
-        /etc/pki/akmods/private/private_key.der \
+        "$root/private/private_key.der" \
         /var/lib/dkms/mok.key \
         /var/lib/shim-signed/mok/MOK.priv
-    local g
-    for g in /etc/pki/akmods/private/*.priv /etc/pki/akmods/private/*.der; do
+    for g in "$root/private"/*.priv "$root/private"/*.der; do
         [ -e "$g" ] || continue
+        case "$g" in
+            */fedora_*.priv) continue ;;
+        esac
         printf '%s\n' "$g"
     done
 }
@@ -75,13 +98,27 @@ r610_mok_cert_candidates() {
         printf '%s\n' "$R610_MOK_CERT"
         return 0
     fi
+    local root g key id paired
+    root="$(r610_akmods_root)"
+    key="$(r610_mok_key_path 2>/dev/null || true)"
+    id="$(r610_fedora_mok_stem "$key")"
+    if [ -n "$id" ]; then
+        paired="$root/certs/${id}.der"
+        printf '%s\n' "$paired"
+    fi
+    for g in "$root/certs"/fedora_*.der; do
+        [ -e "$g" ] || continue
+        printf '%s\n' "$g"
+    done
     printf '%s\n' \
-        /etc/pki/akmods/certs/public_key.der \
+        "$root/certs/public_key.der" \
         /var/lib/dkms/mok.pub \
         /var/lib/shim-signed/mok/MOK.der
-    local g
-    for g in /etc/pki/akmods/certs/*.der /etc/pki/akmods/certs/*.pem; do
+    for g in "$root/certs"/*.der "$root/certs"/*.pem; do
         [ -e "$g" ] || continue
+        case "$g" in
+            */fedora_*.der) continue ;;
+        esac
         printf '%s\n' "$g"
     done
 }
@@ -150,21 +187,50 @@ r610_mok_cert_state() {
 
 r610_normalize_fingerprint() {
     local s="$1"
-    s="${s#SHA1 Fingerprint}"
-    s="${s#[:= ]}"
-    s="${s# }"
-    printf '%s' "$s" | tr 'A-F' 'a-f' | tr -d ' :\n\t'
+    s="$(printf '%s' "$s" | tr 'A-F' 'a-f')"
+    case "$s" in
+        *fingerprint*) s="${s##*fingerprint}" ;;
+        *sha1[=:]*)    s="${s##*sha1}" ;;
+    esac
+    printf '%s' "$s" | tr -d ' :=\n\t-'
 }
 
-# SHA1 hex (no colons) of a PEM or DER certificate. Never dumps the cert body.
+r610_sha256_file() {
+    sha256sum -- "$1" 2>/dev/null | awk '{print $1}'
+}
+
+# SHA256 of the certificate's DER bytes. PEM is converted; existing DER is
+# hashed as-is so it matches mokutil --export output. Never dumps the body.
+r610_cert_der_sha256() {
+    local cert="$1"
+    local openssl_bin="${OPENSSL:-openssl}"
+    local tmp der
+    [ -r "$cert" ] || return 1
+    if "$openssl_bin" x509 -inform DER -in "$cert" -noout >/dev/null 2>&1; then
+        r610_sha256_file "$cert"
+        return 0
+    fi
+    tmp="$(mktemp -d)" || return 1
+    chmod 700 "$tmp"
+    der="$tmp/cert.der"
+    if ! "$openssl_bin" x509 -in "$cert" -outform DER -out "$der" 2>/dev/null; then
+        rm -rf "$tmp"
+        return 1
+    fi
+    r610_sha256_file "$der"
+    rm -rf "$tmp"
+}
+
+# SHA1 hex (no colons) of a PEM or DER certificate. Prefer DER (akmods).
+# Never dumps the cert body. Used only for --list-enrolled SHA1 fallback.
 r610_cert_sha1() {
     local cert="$1"
     local fp=""
     local openssl_bin="${OPENSSL:-openssl}"
     [ -r "$cert" ] || return 1
-    fp="$("$openssl_bin" x509 -noout -fingerprint -sha1 -in "$cert" 2>/dev/null || true)"
+    fp="$("$openssl_bin" x509 -inform DER -noout -fingerprint -sha1 -in "$cert" 2>/dev/null || true)"
     if [ -z "$fp" ]; then
-        fp="$("$openssl_bin" x509 -inform DER -noout -fingerprint -sha1 -in "$cert" 2>/dev/null || true)"
+        fp="$("$openssl_bin" x509 -noout -fingerprint -sha1 -in "$cert" 2>/dev/null || true)"
     fi
     [ -n "$fp" ] || return 1
     r610_normalize_fingerprint "$fp"
@@ -175,19 +241,90 @@ r610_mokutil_bin() {
     printf '%s\n' "${MOKUTIL:-mokutil}"
 }
 
-# PASS | FAIL | UNKNOWN — is this certificate in the enrolled MOK list?
-# PASS/FAIL only after a real probe (mokutil --test-key exit status, or
-# SHA1 vs --list-enrolled when --test-key is absent). UNKNOWN if the cert
-# is missing/unreadable or mokutil cannot be run — never treat that as
-# "not enrolled". Do not decide enrollment by CN/name matching. Never sudo.
-r610_mokutil_supports_test_key() {
+r610_mokutil_supports_flag() {
     local bin="${1:-$(r610_mokutil_bin)}"
-    "$bin" --help 2>&1 | grep -q -- '--test-key'
+    local flag="$2"
+    "$bin" --help 2>&1 | grep -q -- "$flag"
 }
 
+# Diagnostic only. Fedora mokutil may print "already enrolled" and still
+# return rc=1; never use this exit status for PASS/FAIL.
+r610_mokutil_supports_test_key() {
+    r610_mokutil_supports_flag "${1:-$(r610_mokutil_bin)}" "--test-key"
+}
+
+r610_mokutil_supports_export() {
+    r610_mokutil_supports_flag "${1:-$(r610_mokutil_bin)}" "--export"
+}
+
+# Print PASS or FAIL; return 0 if export produced a determination.
+# Return 1 if --export is missing or failed (caller may SHA1-fallback).
+# Never uses --test-key. Does not clobber the caller's EXIT trap.
+r610_enrolled_state_via_export() {
+    local cert="$1"
+    local bin="$2"
+    local tmp want h f
+    r610_mokutil_supports_export "$bin" || return 1
+    want="$(r610_cert_der_sha256 "$cert")" || return 1
+    [ -n "$want" ] || return 1
+    tmp="$(mktemp -d)" || return 1
+    chmod 700 "$tmp"
+    if ! ( cd "$tmp" && "$bin" --export >/dev/null 2>&1 ); then
+        rm -rf "$tmp"
+        return 1
+    fi
+    for f in "$tmp"/*.der; do
+        [ -f "$f" ] || continue
+        h="$(r610_sha256_file "$f")" || continue
+        if [ "$h" = "$want" ]; then
+            rm -rf "$tmp"
+            printf 'PASS\n'
+            return 0
+        fi
+    done
+    rm -rf "$tmp"
+    printf 'FAIL\n'
+    return 0
+}
+
+# SHA1 vs SHA1 only. 40-hex fingerprints; never compare SHA256 to SHA1.
+# Print PASS or FAIL; return 1 if the list cannot be queried/parsed.
+r610_enrolled_state_via_sha1_list() {
+    local cert="$1"
+    local bin="$2"
+    local want got line saw=0
+    r610_mokutil_supports_flag "$bin" "--list-enrolled" || return 1
+    want="$(r610_cert_sha1 "$cert")" || return 1
+    [ "${#want}" -eq 40 ] || return 1
+    while IFS= read -r line; do
+        case "$line" in
+            *SHA1*Fingerprint*)
+                got="$(r610_normalize_fingerprint "$line")"
+                [ "${#got}" -eq 40 ] || continue
+                saw=1
+                if [ "$got" = "$want" ]; then
+                    printf 'PASS\n'
+                    return 0
+                fi
+                ;;
+        esac
+    done < <("$bin" --list-enrolled 2>/dev/null || true)
+    if [ "$saw" -eq 1 ]; then
+        printf 'FAIL\n'
+        return 0
+    fi
+    return 1
+}
+
+# PASS | FAIL | UNKNOWN — is this certificate in the enrolled MOK list?
+# Primary: SHA256 of local DER vs each mokutil --export DER (exact match).
+# Fallback: SHA1 fingerprint vs mokutil --list-enrolled SHA1 fingerprints.
+# UNKNOWN if the cert is missing/unreadable or enrollment cannot be queried.
+# mokutil --test-key is never authoritative (Fedora may rc=1 while enrolled).
+# Do not decide enrollment by CN/name/filename/serial. Never sudo.
 r610_cert_enrolled_state() {
     local cert="${1:-}"
-    local mokutil_bin want got line
+    local mokutil_bin state
     if [ -z "$cert" ]; then
         cert="$(r610_mok_cert_path 2>/dev/null || true)"
     fi
@@ -200,31 +337,15 @@ r610_cert_enrolled_state() {
         printf 'UNKNOWN\n'
         return 0
     fi
-    if r610_mokutil_supports_test_key "$mokutil_bin"; then
-        if "$mokutil_bin" --test-key "$cert" >/dev/null 2>&1; then
-            printf 'PASS\n'
-        else
-            printf 'FAIL\n'
-        fi
+    if state="$(r610_enrolled_state_via_export "$cert" "$mokutil_bin")"; then
+        printf '%s\n' "$state"
         return 0
     fi
-    want="$(r610_cert_sha1 "$cert" 2>/dev/null || true)"
-    if [ -z "$want" ]; then
-        printf 'UNKNOWN\n'
+    if state="$(r610_enrolled_state_via_sha1_list "$cert" "$mokutil_bin")"; then
+        printf '%s\n' "$state"
         return 0
     fi
-    while IFS= read -r line; do
-        case "$line" in
-            *SHA1*Fingerprint*)
-                got="$(r610_normalize_fingerprint "$line")"
-                if [ "$got" = "$want" ]; then
-                    printf 'PASS\n'
-                    return 0
-                fi
-                ;;
-        esac
-    done < <("$mokutil_bin" --list-enrolled 2>/dev/null || true)
-    printf 'FAIL\n'
+    printf 'UNKNOWN\n'
 }
 
 # CN from the signing certificate (PEM or DER). unknown if unreadable.

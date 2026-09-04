@@ -155,7 +155,7 @@ verify_dir() {
             if [[ "$enrolled" == "FAIL" ]]; then
                 echo "  FAIL: certificate not enrolled (do not disable Secure Boot; enroll MOK instead)"
             else
-                echo "  FAIL: cannot confirm MOK enrollment (readable cert required; do not import a new MOK unless mokutil --test-key fails as root)"
+                echo "  FAIL: cannot confirm MOK enrollment (readable cert required; do not import a new MOK unless exported DER SHA256 does not match)"
             fi
             rc=1
         fi

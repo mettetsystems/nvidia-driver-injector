@@ -82,7 +82,7 @@ fi
 if [[ "$key_state" != "available" || "$cert_state" != "available" ]]; then
     echo "sign-r610-modules: signing key is $key_state; certificate is $cert_state." >&2
     echo "  Set R610_MOK_KEY and R610_MOK_CERT, or run as root so akmods/DKMS MOK is readable." >&2
-    echo "  Do not disable Secure Boot. Do not import a new MOK unless mokutil --test-key fails as root." >&2
+    echo "  Do not disable Secure Boot. Do not import a new MOK unless exported DER SHA256 does not match." >&2
     exit 1
 fi
 

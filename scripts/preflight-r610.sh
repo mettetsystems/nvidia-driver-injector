@@ -256,9 +256,9 @@ if [ "$sb" = "enabled" ]; then
             ;;
         *)
             if [ "$sign_cert" = "unreadable" ] || [ "$sign_key" = "unreadable" ]; then
-                warn "cannot test MOK enrollment without a readable certificate; re-run as root. Do not import a new MOK unless mokutil --test-key fails as root."
+                warn "cannot test MOK enrollment without a readable certificate; re-run as root. Do not import a new MOK unless exported DER SHA256 does not match."
             elif [ "$sign_cert" != "unavailable" ]; then
-                warn "cannot test MOK enrollment (readable cert and mokutil required). Do not import a new MOK unless mokutil --test-key fails as root."
+                warn "cannot test MOK enrollment (readable cert and mokutil --export required). Do not import a new MOK unless exported DER SHA256 does not match."
             fi
             ;;
     esac
