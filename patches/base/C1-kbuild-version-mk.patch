@@ -12,7 +12,7 @@ index 089c77d0..e100ef94 100644
  ccflags-y += -I$(src)
  ccflags-y += -Wall $(DEFINES) $(INCLUDES) -Wno-cast-qual -Wno-format-extra-args
  ccflags-y += -D__KERNEL__ -DMODULE -DNVRM
--ccflags-y += -DNV_VERSION_STRING=\"595.71.05\"
+-ccflags-y += -DNV_VERSION_STRING=\"610.57.04\"
 +# Derive NV_VERSION_STRING from the repo-root version.mk so the module
 +# version string has a single source of truth and cannot drift from a
 +# hardcoded Kbuild literal. kbuild's .cmd hashing detects the expanded
