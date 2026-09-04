@@ -26,8 +26,14 @@ in k3s. Pick one. They are not meant to run side-by-side on the same node
 - **Hardware:** AORUS RTX 5090 eGPU, Thunderbolt-4-capable host (reference
   hardware: NUC 15 Pro+), TB4 cable.
 - **OS:** Linux, kernel 6.18+ (tested on Fedora 43 + kernel `6.19.14-200.fc43`
-  and Fedora 44 + kernel `7.0.9-204.fc44`). The host scripts handle Fedora and
-  Debian/Ubuntu package paths.
+  and Fedora 44 + kernel `7.0.9-204.fc44`). Branch `r610-linux-7.1` additionally
+  compiles against Fedora 44 + `7.1.10-200.fc44.x86_64` and NVIDIA 610.57.04 —
+  see [`platforms/fedora44-linux71-aorus5090.md`](platforms/fedora44-linux71-aorus5090.md).
+  **Do not** run `apply.sh` without `--skip-cmdline` on that host; the NUC-era
+  `iommu=off` defaults would regress the known-good `iommu=pt` line. On Fedora
+  44 + 7.1 the script now skips cmdline (and global ICD disable when an
+  internal NVIDIA GPU is present) unless you pass `--force-cmdline` /
+  `--force-icd`.
 - **Container runtime:**
   - **Path A** — Docker installed and running. Verify:
     ```bash

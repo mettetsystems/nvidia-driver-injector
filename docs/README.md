@@ -14,6 +14,18 @@ go deeper.
 | [architecture.md](architecture.md) | You want the three-layer design, the component-ownership table, and reboot-survival behaviour. |
 | [patches.md](patches.md) | You want to know what each patch cluster does, the bug it fixes, and how it maps to the C/E/A upstream geometry. |
 
+## R610 / Linux 7.1 rebase (`r610-linux-7.1`)
+
+| Doc | Topic |
+|---|---|
+| [r610-rebase-audit.md](r610-rebase-audit.md) | What was pinned to 595.71.05 and what still needs porting. |
+| [r610-patch-matrix.md](r610-patch-matrix.md) | Per-patch apply + semantic status vs 610.57.04. |
+| [r610-build-baseline.md](r610-build-baseline.md) | Stock and patched `make modules` on 7.1.10 (not loaded). |
+| [r610-watchdog-analysis.md](r610-watchdog-analysis.md) | RC GPFIFO `GPPut` assert — analysis only, no global disable. |
+| [r610-test-plan.md](r610-test-plan.md) | CUDA ladder; Stage 4B is operator-gated. |
+| [r610-rollback.md](r610-rollback.md) | Dry-run install/remove; never overwrite the only boot entry. |
+| [platforms/fedora44-linux71-aorus5090.md](platforms/fedora44-linux71-aorus5090.md) | Reference host, known-good cmdline, Podman notes. |
+
 ## Deep dives
 
 | Doc | Topic |

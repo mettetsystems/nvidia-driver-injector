@@ -8,6 +8,10 @@ underlying three-layer design, see [`architecture.md`](architecture.md). For
 the producer / consumer contract (Path B only), see
 [`consumer-contract.md`](consumer-contract.md).
 
+On branch `r610-linux-7.1`, prefer [`r610-rollback.md`](r610-rollback.md) and
+`scripts/remove-r610.sh` (dry-run by default). Do not revert the Fedora 44 +
+7.1 `iommu=pt` cmdline with `--revert-cmdline`.
+
 ## Three teardown shapes (both paths)
 
 | Shape | When | Touches |

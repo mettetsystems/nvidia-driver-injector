@@ -75,16 +75,25 @@ The three test files (`tests/test-compose.sh`, `tests/test-intent-lint.sh`,
 if any file does. Typical pass output ends with three `N run, 0 failed`
 lines.
 
+On `r610-linux-7.1` additional files cover NVIDIA version plumbing,
+Fedora 44 / GB202 mocks, the production 19-patch manifest, and dry-run
+install/remove wrappers. Still no real GPU required.
+
 The patchset compile gate is a separate, heavier tool:
 
 ```bash
 sudo tools/validate-patchset.sh --fork /root/open-gpu-kernel-modules
+# alias:
+sudo tools/validate-patchset.sh --nvidia-tag 610.57.04 --fork /path/to/ogkm
 ```
 
-It checks out a clean NVIDIA `595.71.05` worktree, applies the composed
-patch set, and runs `make modules` against `/lib/modules/$(uname -r)/build`.
-Use this after any change to `patches/`, `Dockerfile`'s
-`NVIDIA_OPEN_TAG`, or any of the tools under `tools/`.
+Default tag is `NVIDIA_OPEN_TAG` from [`nvidia-version.env`](../nvidia-version.env)
+(currently `610.57.04` on this branch). The tool checks out a clean NVIDIA
+worktree at that tag, applies the composed patch set, and runs `make modules`
+against `/lib/modules/$(uname -r)/build`.
+
+Hardware CUDA ladder (operator only, not CI): [`diag/r610/`](../diag/r610/).
+Do not run Stage 4B without reading [`r610-test-plan.md`](r610-test-plan.md).
 
 ### What each test covers
 
@@ -93,6 +102,10 @@ Use this after any change to `patches/`, `Dockerfile`'s
 | `tests/test-compose.sh` | `tools/compose-patchset.sh` — manifest-driven base+addon patch rendering. |
 | `tests/test-manifest-lib.sh` | `tools/lib/manifest.sh` — manifest parsing + lint (row count, duplicate ids, base/addon source-branch rules). |
 | `tests/test-intent-lint.sh` | `tools/intent-lint.sh` — the patch-intent + patch-review frontmatter schema (`docs/patch-intent-schema.md`). |
+| `tests/test-nvidia-version.sh` | `nvidia-version.env` vs Dockerfile ARG, tag validation, image-tag literals. |
+| `tests/test-platform.sh` | Fedora 44 / 7.1 helpers, GB202 discovery, BAR1, compute-only ICD plan. |
+| `tests/test-production-manifest.sh` | 19-row apply order, patch files, R610 literals, no RC-watchdog patch. |
+| `tests/test-r610-scripts.sh` | install/remove dry-run; Stage 4B scripts refuse without a freeze flag. |
 | `tools/validate-patchset.sh` | End-to-end: clean checkout → compose → apply → `make modules`. |
 
 ### Running a single file

@@ -2,8 +2,11 @@
 
 A containerised kernel-module injector that patches NVIDIA's open driver to keep Thunderbolt-attached eGPUs from hard-locking Linux hosts.
 
-**Status:** in production.\
-Tested on Fedora 43–44, kernels 6.19–7.0.
+**Status:** in production on NVIDIA 595.71.05 / kernels 6.19–7.0.
+Branch **`r610-linux-7.1`** rebases the injector to NVIDIA **610.57.04** on Fedora 44 / Linux **7.1.10**. Milestone A (source + compile) is complete; the patched module is **not** loaded on the reference host yet. See [`docs/r610-rollback.md`](docs/r610-rollback.md).
+
+Tested (main / 595): Fedora 43–44, kernels 6.19–7.0.
+Tested (this branch / 610 compile-only): Fedora 44, kernel `7.1.10-200.fc44.x86_64`.
 
 ## Install
 
@@ -200,6 +203,8 @@ The clean exit is by design — the container is meant to be left as `restart: u
 
 ```bash
 docker compose build
+# or, on Fedora 44:
+podman build -t apnex/nvidia-driver-injector:610.57.04-apnex.1 .
 ```
 
 Cold ~3-5 min, ~30s with cached layers.\
@@ -211,8 +216,8 @@ Build inputs:
 
 | Input | Source | When |
 |---|---|---|
-| NVIDIA upstream | github.com/NVIDIA/open-gpu-kernel-modules tag `595.71.05` | Image build (`git clone --depth 1`) |
-| Project patches | `patches/base/` + `patches/addon/` (11 patches; `patches/legacy/` for provenance) | Image build (gated by `--check` and `make modules`) |
+| NVIDIA upstream | github.com/NVIDIA/open-gpu-kernel-modules tag from `nvidia-version.env` (`610.57.04` on `r610-linux-7.1`) | Image build (`git clone --depth 1`) |
+| Project patches | `patches/base/` + `patches/addon/` (19 production patches; `patches/legacy/` for provenance) | Image build (gated by `--check` and `make modules`) |
 | Host kernel + headers | `/lib/modules/$(uname -r)/build` | Bind-mount at runtime |
 
 Patch drift fails the image build, not the pod start.
