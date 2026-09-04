@@ -203,19 +203,37 @@ fi
 # ============================================================================
 section "3. Layer 1 — bridge-link-cap systemd unit (Lever H17)"
 # ============================================================================
+h17_state="$(platform_h17_state)"
+h17_ld="$(platform_lockdown_mode)"
+info "lockdown=${h17_ld}  H17=${h17_state}"
+case "$h17_state" in
+    PASS) ok "H17=PASS (LnkCtl2 HASD + Target match)" ;;
+    WRITE_BLOCKED)
+        fail_ "H17=WRITE_BLOCKED (kernel lockdown=${h17_ld} blocks userspace setpci; production cap is in-driver A13 — do not disable Secure Boot)"
+        ;;
+    WRITE_FAILED) fail_ "H17=WRITE_FAILED (PCI config write returned an error)" ;;
+    VERIFY_FAILED) fail_ "H17=VERIFY_FAILED (LnkCtl2 readback does not match Gen3+bit5)" ;;
+    *) fail_ "H17=${h17_state}" ;;
+esac
 if systemctl cat nvidia-driver-injector-bridge-link-cap.service >/dev/null 2>&1; then
     if systemctl is-enabled nvidia-driver-injector-bridge-link-cap.service >/dev/null 2>&1; then
-        ok "bridge-link-cap.service: enabled (will run at next boot)"
+        ok "bridge-link-cap.service: enabled (userspace fallback when lockdown=none)"
     else
         fail_ "bridge-link-cap.service: NOT enabled"
     fi
     if systemctl is-active nvidia-driver-injector-bridge-link-cap.service >/dev/null 2>&1; then
-        ok "bridge-link-cap.service: active (cap applied)"
+        if [[ "$h17_state" == "PASS" ]]; then
+            ok "bridge-link-cap.service: active and H17=PASS"
+        else
+            warn "bridge-link-cap.service: active (RemainAfterExit) but H17=${h17_state} — systemd active is not proof of cap"
+        fi
     else
-        fail_ "bridge-link-cap.service: NOT active"
+        if [[ "$h17_state" == "PASS" ]]; then
+            info "bridge-link-cap.service: not active (in-driver H17 already PASS)"
+        else
+            fail_ "bridge-link-cap.service: NOT active"
+        fi
     fi
-    # Verify ordering — must be Before=docker.service for the cap to run
-    # before any container can race the nvidia bind.
     before=$(systemctl show -p Before nvidia-driver-injector-bridge-link-cap.service --value 2>/dev/null)
     if grep -q 'docker.service' <<<"$before"; then
         ok "bridge-link-cap.service: ordered Before=docker.service"
@@ -268,12 +286,17 @@ else
         # match live link speed). Bit 5 actually prevents the
         # autonomous Gen3↔Gen4 oscillation that triggers GSP_LOCKDOWN.
         if [[ "$bit5" -eq 1 && "$active" -eq 1 ]]; then
-            ok "bridge link: live=Gen$speed active, bit5=1 (Lever H17 in force)"
-            info "  LnkCtl2=0x$lnkctl2 — Target=Gen$target (cosmetic; bit 5 is what protects)"
+            if [[ "$h17_state" == "PASS" ]]; then
+                ok "bridge link: live=Gen$speed active, bit5=1 H17=PASS"
+            else
+                ok "bridge link: live=Gen$speed active, bit5=1"
+                info "  H17 classifier=${h17_state} (see section 3)"
+            fi
+            info "  LnkCtl2=0x$lnkctl2 — Target=Gen$target"
         elif [[ "$bit5" -eq 0 ]]; then
-            fail_ "bridge link: LnkCtl2 bit 5 NOT set — autonomous speed changes still possible (wedge risk)"
+            fail_ "bridge link: LnkCtl2 bit 5 NOT set — H17=${h17_state} (autonomous speed changes still possible)"
         else
-            warn "bridge link: bit5=$bit5 active=$active (unusual)"
+            warn "bridge link: bit5=$bit5 active=$active H17=${h17_state}"
         fi
     fi
 

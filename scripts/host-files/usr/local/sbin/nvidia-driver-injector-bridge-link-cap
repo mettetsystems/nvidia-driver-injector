@@ -65,6 +65,28 @@
 
 set -u
 
+# Userspace H17 is diagnostic / fallback when kernel lockdown is *none*.
+# Under Fedora Secure Boot, lockdown=integrity blocks sysfs PCI config
+# writes (LOCKDOWN_PCI_ACCESS). Production cap is in-driver A13.
+# Do not disable Secure Boot or lockdown to make this script work.
+#
+# Exit codes:
+#   0 PASS
+#   1 usage
+#   2 read failure
+#   3 WRITE_BLOCKED (EPERM/EACCES or lockdown != none)
+#   4 WRITE_FAILED
+#   5 VERIFY_FAILED
+
+SETPCI="${SETPCI:-setpci}"
+PCI_SYSFS="${PCI_SYSFS:-/sys/bus/pci/devices}"
+LOCKDOWN_FILE="${LOCKDOWN_FILE:-/sys/kernel/security/lockdown}"
+
+H17_PASS=0
+H17_WRITE_BLOCKED=3
+H17_WRITE_FAILED=4
+H17_VERIFY_FAILED=5
+
 VENDOR_ID="0x10de"        # NVIDIA
 DEVICE_ID="0x2b85"        # RTX 5090
 
@@ -105,11 +127,11 @@ yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
 red() { printf '\033[31m%s\033[0m\n' "$*" >&2; }
 
 # Find the PCI bridge directly above the AORUS RTX 5090 by walking
-# /sys/bus/pci/devices for the matching vendor:device, then taking
-# the parent in the device tree. Works on either NUC TB4 port.
+# PCI sysfs for vendor:device 10de:2b85, then taking the parent.
+# Never selects an internal NVIDIA display GPU (different device id).
 detect_bridge() {
     local d v dv
-    for d in /sys/bus/pci/devices/*; do
+    for d in "$PCI_SYSFS"/*; do
         [[ -r "$d/vendor" && -r "$d/device" ]] || continue
         v=$(<"$d/vendor"); dv=$(<"$d/device")
         if [[ "$v" == "$VENDOR_ID" && "$dv" == "$DEVICE_ID" ]]; then
@@ -160,7 +182,7 @@ fi
 # walked /sys/bus/pci/devices so re-walking is cheap.
 detect_gpu_bdf() {
     local d v dv
-    for d in /sys/bus/pci/devices/*; do
+    for d in "$PCI_SYSFS"/*; do
         [[ -r "$d/vendor" && -r "$d/device" ]] || continue
         v=$(<"$d/vendor"); dv=$(<"$d/device")
         if [[ "$v" == "$VENDOR_ID" && "$dv" == "$DEVICE_ID" ]]; then
@@ -169,6 +191,53 @@ detect_gpu_bdf() {
         fi
     done
     return 1
+}
+
+h17_lockdown_mode() {
+    local raw f="${1:-$LOCKDOWN_FILE}"
+    [ -r "$f" ] || { printf 'unknown\n'; return 0; }
+    raw="$(tr -d '\n' < "$f")"
+    if [[ "$raw" =~ \[([a-z]+)\] ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    printf 'unknown\n'
+}
+
+h17_exit() {
+    local state="$1"; shift
+    printf 'H17=%s\n' "$state" >&2
+    [ $# -gt 0 ] && red "$*"
+    case "$state" in
+        PASS) exit "$H17_PASS" ;;
+        WRITE_BLOCKED) exit "$H17_WRITE_BLOCKED" ;;
+        WRITE_FAILED) exit "$H17_WRITE_FAILED" ;;
+        VERIFY_FAILED) exit "$H17_VERIFY_FAILED" ;;
+        *) exit 2 ;;
+    esac
+}
+
+h17_classify_write_err() {
+    local err="$1"
+    if printf '%s' "$err" | grep -qiE 'Operation not permitted|Permission denied|EPERM|EACCES'; then
+        printf 'WRITE_BLOCKED\n'
+    else
+        printf 'WRITE_FAILED\n'
+    fi
+}
+
+h17_lnkctl2_ok() {
+    local hex="$1"
+    local int target bit5 want
+    int=$((16#${hex}))
+    target=$(( int & 0xF ))
+    bit5=$(( (int >> 5) & 1 ))
+    want="${TARGET_SPEED_OVERRIDE:-3}"
+    if [[ -z "$want" || "$want" == "0" ]]; then
+        [[ "$bit5" -eq 1 ]]
+        return
+    fi
+    [[ "$bit5" -eq 1 && "$target" -eq "$want" ]]
 }
 GPU_BDF="$(detect_gpu_bdf || true)"
 
@@ -191,16 +260,26 @@ fi
 
 read_word() {
     local off="$1"
-    setpci -s "$BRIDGE" "$off" 2>/dev/null
+    "$SETPCI" -s "$BRIDGE" "$off" 2>/dev/null
 }
 
+# Writes one config word. Prints the classifier on stdout when it fails
+# (WRITE_BLOCKED / WRITE_FAILED) and returns non-zero.
 write_word() {
-    local off="$1" val="$2"
-    setpci -s "$BRIDGE" "${off}=${val}"
+    local off="$1" val="$2" err rc
+    err="$("$SETPCI" -s "$BRIDGE" "${off}=${val}" 2>&1)"
+    rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+        printf '%s\n' "$err" >&2
+        h17_classify_write_err "$err"
+        return "$rc"
+    fi
+    return 0
 }
 
 cmd_apply() {
-    local cur
+    local cur mode class
+    mode="$(h17_lockdown_mode)"
     cur=$(read_word "$LNKCTL2_OFFSET")
     if [[ -z "$cur" ]]; then
         red "could not read LnkCtl2 from ${BRIDGE}"
@@ -214,67 +293,113 @@ cmd_apply() {
     # load-bearing mitigation per project history.
     new_int=$(( cur_int | LNKCTL2_BIT5_HW_AUTO_SPEED_DISABLE ))
 
-    # Apply Target Link Speed unless explicitly opted out (CAP_TARGET_SPEED=0
-    # or empty). Default = "2" (Gen2) per the empirical-lesson note above.
     if [[ -n "$TARGET_SPEED_OVERRIDE" && "$TARGET_SPEED_OVERRIDE" != "0" ]]; then
         new_int=$(( (new_int & ~0xF) | (TARGET_SPEED_OVERRIDE & 0xF) ))
         green "bridge=${BRIDGE}  setting bit 5 + Target=Gen${TARGET_SPEED_OVERRIDE}"
     else
-        green "bridge=${BRIDGE}  setting bit 5 ONLY (Target Link Speed left at vendor value — NOT recommended on Port A)"
+        green "bridge=${BRIDGE}  setting bit 5 ONLY (Target Link Speed left at vendor value — NOT recommended)"
     fi
 
     new_hex=$(printf '%04x' "$new_int")
 
+    if h17_lnkctl2_ok "$cur" && [[ "$cur" == "$new_hex" ]]; then
+        green "  LnkCtl2 already 0x${cur} — no change needed"
+        green "H17=PASS"
+        exit "$H17_PASS"
+    fi
+
+    if [[ "$mode" != "none" && "$mode" != "unknown" ]]; then
+        h17_exit WRITE_BLOCKED \
+            "kernel lockdown=${mode} blocks userspace PCI config writes (sysfs EPERM). Production H17 is in-driver A13. Do not disable Secure Boot or lockdown."
+    fi
+
     if [[ "$cur" == "$new_hex" ]]; then
         green "  LnkCtl2 already 0x${cur} — no change needed"
     else
-        write_word "$LNKCTL2_OFFSET" "$new_hex"
+        class="$(write_word "$LNKCTL2_OFFSET" "$new_hex")" && class=""
+        if [[ -n "$class" ]]; then
+            h17_exit "$class" "LnkCtl2 write to ${BRIDGE} failed (wanted 0x${new_hex})"
+        fi
         green "  LnkCtl2 0x${cur} → 0x${new_hex}"
 
-        # Retrain link so the change takes effect.
         local lnkctl lnkctl_int retrain_int retrain_hex
         lnkctl=$(read_word "$LNKCTL_OFFSET")
+        if [[ -z "$lnkctl" ]]; then
+            h17_exit WRITE_FAILED "could not read LnkCtl from ${BRIDGE} before retrain"
+        fi
         lnkctl_int=$((0x$lnkctl))
         retrain_int=$(( lnkctl_int | LNKCTL_BIT5_RETRAIN ))
         retrain_hex=$(printf '%04x' "$retrain_int")
-        write_word "$LNKCTL_OFFSET" "$retrain_hex"
+        class="$(write_word "$LNKCTL_OFFSET" "$retrain_hex")" && class=""
+        if [[ -n "$class" ]]; then
+            h17_exit "$class" "retrain write to ${BRIDGE} failed — not reporting success"
+        fi
         green "  retrain triggered"
     fi
+
+    cur=$(read_word "$LNKCTL2_OFFSET")
+    if [[ -z "$cur" ]] || ! h17_lnkctl2_ok "$cur"; then
+        h17_exit VERIFY_FAILED \
+            "LnkCtl2 readback 0x${cur:-????} on ${BRIDGE} (need bit5=1 Target=Gen${TARGET_SPEED_OVERRIDE})"
+    fi
+    green "H17=PASS"
+    exit "$H17_PASS"
 }
 
 cmd_restore() {
-    # Clear bit 5 of LnkCtl2 (re-enable hardware autonomous speed
-    # changes). This reverts the cap. If CAP_TARGET_SPEED was set on a
-    # previous apply, we don't try to remember + restore the original
-    # Target Link Speed — the original is whatever the bridge had at
-    # cold-boot, which we don't track.
-    local cur cur_int new_int new_hex
+    local cur cur_int new_int new_hex class mode
+    mode="$(h17_lockdown_mode)"
     cur=$(read_word "$LNKCTL2_OFFSET")
+    if [[ -z "$cur" ]]; then
+        red "could not read LnkCtl2 from ${BRIDGE}"
+        exit 2
+    fi
     cur_int=$((0x$cur))
     new_int=$(( cur_int & ~LNKCTL2_BIT5_HW_AUTO_SPEED_DISABLE ))
     new_hex=$(printf '%04x' "$new_int")
     if [[ "$cur" == "$new_hex" ]]; then
         yellow "bridge=${BRIDGE}  bit 5 already clear — no change"
-    else
-        write_word "$LNKCTL2_OFFSET" "$new_hex"
-        yellow "bridge=${BRIDGE}  LnkCtl2 0x${cur} → 0x${new_hex}  (bit 5 cleared)"
+        return 0
     fi
+    if [[ "$mode" != "none" && "$mode" != "unknown" ]]; then
+        h17_exit WRITE_BLOCKED \
+            "kernel lockdown=${mode} blocks userspace PCI config writes; not claiming bit 5 cleared"
+    fi
+    class="$(write_word "$LNKCTL2_OFFSET" "$new_hex")" && class=""
+    if [[ -n "$class" ]]; then
+        h17_exit "$class" "LnkCtl2 restore write to ${BRIDGE} failed — not claiming bit 5 cleared"
+    fi
+    cur=$(read_word "$LNKCTL2_OFFSET")
+    if [[ -z "$cur" || "$cur" != "$new_hex" ]]; then
+        h17_exit VERIFY_FAILED "LnkCtl2 restore readback 0x${cur:-????} (wanted 0x${new_hex})"
+    fi
+    yellow "bridge=${BRIDGE}  LnkCtl2 → 0x${new_hex}  (bit 5 cleared)"
 }
 
 cmd_status() {
-    local lnkctl2 lnksta
+    local lnkctl2 lnksta mode state
     lnkctl2=$(read_word "$LNKCTL2_OFFSET")
-    lnksta=$(setpci -s "$BRIDGE" CAP_EXP+0x12.W 2>/dev/null)
+    lnksta=$("$SETPCI" -s "$BRIDGE" CAP_EXP+0x12.W 2>/dev/null)
     local target bit5 speed width active
-    target=$(( 0x$lnkctl2 & 0xF ))
-    bit5=$(( (0x$lnkctl2 >> 5) & 1 ))
-    speed=$(( 0x$lnksta & 0xF ))
-    width=$(( (0x$lnksta >> 4) & 0x3F ))
-    active=$(( (0x$lnksta >> 12) & 1 ))
+    target=$(( 0x${lnkctl2:-0} & 0xF ))
+    bit5=$(( (0x${lnkctl2:-0} >> 5) & 1 ))
+    speed=$(( 0x${lnksta:-0} & 0xF ))
+    width=$(( (0x${lnksta:-0} >> 4) & 0x3F ))
+    active=$(( (0x${lnksta:-0} >> 12) & 1 ))
+    mode="$(h17_lockdown_mode)"
+    if h17_lnkctl2_ok "${lnkctl2:-0}"; then
+        state=PASS
+    elif [[ "$mode" != "none" && "$mode" != "unknown" ]]; then
+        state=WRITE_BLOCKED
+    else
+        state=VERIFY_FAILED
+    fi
     cat <<EOF
 bridge=${BRIDGE}
 LnkCtl2=0x${lnkctl2}  TargetLinkSpeed=Gen${target}  HwAutoSpeedDisable(bit5)=${bit5}
 LnkSta=0x${lnksta}    LiveSpeed=Gen${speed}  Width=x${width}  Active=${active}
+lockdown=${mode}
+H17=${state}
 EOF
 }
 

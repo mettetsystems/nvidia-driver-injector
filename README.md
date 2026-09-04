@@ -217,7 +217,7 @@ Build inputs:
 | Input | Source | When |
 |---|---|---|
 | NVIDIA upstream | github.com/NVIDIA/open-gpu-kernel-modules tag from `nvidia-version.env` (`610.57.04` on `r610-linux-7.1`) | Image build (`git clone --depth 1`) |
-| Project patches | `patches/base/` + `patches/addon/` (19 production patches; `patches/legacy/` for provenance) | Image build (gated by `--check` and `make modules`) |
+| Project patches | `patches/base/` + `patches/addon/` (20 production patches; `patches/legacy/` for provenance) | Image build (gated by `--check` and `make modules`) |
 | Host kernel + headers | `/lib/modules/$(uname -r)/build` | Bind-mount at runtime |
 
 Patch drift fails the image build, not the pod start.

@@ -16,6 +16,7 @@ fail=0
 ok()   { printf '  [OK]   %s\n' "$*"; ok=$((ok+1)); }
 warn() { printf '  [WARN] %s\n' "$*"; warn=$((warn+1)); }
 fail() { printf '  [FAIL] %s\n' "$*"; fail=$((fail+1)); }
+info() { printf '  [INFO] %s\n' "$*"; }
 
 echo "== R610 preflight (read-only) =="
 
@@ -123,18 +124,88 @@ else
     warn "no internal NVIDIA GPU seen (ICD disable would be global)"
 fi
 
+sb="$(platform_secure_boot_state)"
+h17_ld="$(platform_lockdown_mode)"
+case "$h17_ld" in
+    none)
+        ok "kernel lockdown=none (userspace PCI config writes allowed)"
+        us_h17="allowed (fallback)"
+        ;;
+    integrity|confidentiality)
+        ok "kernel lockdown=$h17_ld (userspace setpci H17 is not authoritative)"
+        info "do not disable Secure Boot or lockdown; production H17 is in-driver A13"
+        us_h17="blocked by lockdown"
+        ;;
+    *)
+        warn "kernel lockdown=$h17_ld (could not parse /sys/kernel/security/lockdown)"
+        us_h17="unknown"
+        ;;
+esac
+a13="$REPO_ROOT/patches/addon/A13-h17-bridge-cap.patch"
+a13_status="missing"
+if [[ -f "$a13" ]] && grep -q 'PCI_EXP_LNKCTL2_HASD' "$a13"; then
+    ok "A13 in-driver H17 patch present (GB202-scoped)"
+    a13_status="present"
+else
+    fail "A13-h17-bridge-cap.patch missing — userspace setpci cannot cap LnkCtl2 under lockdown"
+fi
+helper="$REPO_ROOT/scripts/host-files/usr/local/sbin/nvidia-driver-injector-bridge-link-cap"
+if grep -q 'write_word' "$helper" && grep -q 'H17_WRITE_BLOCKED' "$helper"; then
+    ok "userspace H17 helper fails closed on PCI write errors"
+else
+    fail "userspace H17 helper still ignores setpci write failures"
+fi
+
+h17_live="$(platform_h17_state)"
+patched="$(nvidia_composed_module_version "$REPO_ROOT")"
+loaded="$(nvidia_loaded_module_version)"
+deploy="$(platform_h17_deployment_state "$h17_ld" "$h17_live" "$loaded" "$patched")"
+h17_display="$h17_live"
+readiness="FAIL"
+
+case "$deploy" in
+    STOCK_DRIVER_PENDING_A13)
+        info "H17 pending A13 activation; stock module currently loaded ($loaded)."
+        info "This is expected before Milestone B."
+        h17_display="PENDING_A13"
+        readiness="PASS for Milestone B"
+        ;;
+    PATCHED_DRIVER_H17_PASS)
+        ok "patched driver $loaded; H17 readback verified"
+        h17_display="PASS"
+        readiness="PASS"
+        ;;
+    PATCHED_DRIVER_H17_FAIL)
+        fail "patched driver loaded ($loaded) but H17 verification failed (H17=${h17_live})"
+        h17_display="$h17_live"
+        readiness="FAIL"
+        ;;
+esac
+if [ "$a13_status" != "present" ]; then
+    readiness="FAIL"
+fi
+
+if [ "$loaded" = "(not loaded)" ]; then
+    warn "nvidia.ko not loaded (expected until Milestone B)"
+else
+    ok "nvidia.ko loaded version=$loaded (preflight does not unload it)"
+fi
+
+echo
+echo "  --- H17 / Milestone B ---"
+printf '  %-24s %s\n' "Secure Boot" "$sb"
+printf '  %-24s %s\n' "kernel lockdown" "$h17_ld"
+printf '  %-24s %s\n' "userspace H17" "$us_h17"
+printf '  %-24s %s\n' "A13 kernel H17" "$a13_status"
+printf '  %-24s %s\n' "loaded module" "$loaded"
+printf '  %-24s %s\n' "live H17" "$h17_display"
+printf '  %-24s %s\n' "readiness" "$readiness"
+
 fw="/lib/firmware/nvidia/${NVIDIA_OPEN_TAG}"
 if [ -s "$fw/gsp_ga10x.bin" ]; then
     ok "GSP firmware present at $fw"
 else
     warn "GSP firmware missing at $fw (needed at module load)"
-fi
-
-if grep -E '^nvidia ' /proc/modules >/dev/null 2>&1; then
-    ver="$(modinfo -F version nvidia 2>/dev/null || echo unknown)"
-    ok "nvidia.ko loaded version=$ver (preflight does not unload it)"
-else
-    warn "nvidia.ko not loaded (expected until Milestone B)"
 fi
 
 echo

@@ -45,6 +45,11 @@ Do not jump to vLLM or a 30 GiB model.
   non-GB202 NVIDIA device is present).
 - Audio udev stays scoped to `10de:22e8`.
 - See `tests/test-multigpu-layer1.sh`.
+- **H17:** this host has kernel lockdown=`integrity` (Secure Boot). Userspace
+  `setpci` LnkCtl2 writes are **WRITE_BLOCKED** (`0x0041` stays, not `0x0063`).
+  Production cap is in-driver A13. Do not disable Secure Boot. Tests:
+  `tests/test-h17-lockdown.sh`. `status-r610.sh` prints `H17=WRITE_BLOCKED`
+  until patched `nvidia.ko` applies the cap.
 
 ## Kernel cmdline
 

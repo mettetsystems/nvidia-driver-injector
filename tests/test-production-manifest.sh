@@ -6,10 +6,10 @@ here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/.." && pwd)"
 . "$root/tools/lib/manifest.sh"
 
-# production manifest: 19 rows, files exist, A11 before A10, C6 first
+# production manifest: 20 rows, files exist, A11 before A10, C6 first
 rows="$(manifest_rows "$root/patches/manifest")"
 count="$(printf '%s\n' "$rows" | grep -c .)"
-assert_eq "$count" "19" "production manifest has 19 rows"
+assert_eq "$count" "20" "production manifest has 20 rows"
 
 first="$(printf '%s\n' "$rows" | awk 'NR==1{print $1}')"
 assert_eq "$first" "C6-cond-acquire-rwlock-fix" "C6 is first"
@@ -52,8 +52,10 @@ assert_file_contains "$root/patches/base/C5-crash-safety.patch" \
     'is_cxl_dev' "C5 anchors on R610 is_cxl_dev"
 assert_file_contains "$root/patches/addon/A3-recovery.patch" \
     'nv-caps-imex.h' "A3 includes after nv-caps-imex.h"
-assert_file_contains "$root/patches/addon/A4-close-path-telemetry.patch" \
-    'uvm_linux.c' "A4 UVM Kbuild still keyed on uvm_linux.c"
+assert_file_contains "$root/patches/addon/A13-h17-bridge-cap.patch" \
+    'PCI_EXP_LNKCTL2_HASD' "A13 sets LnkCtl2 HASD"
+assert_file_contains "$root/patches/addon/A13-h17-bridge-cap.patch" \
+    '0x2b85' "A13 is GB202-scoped"
 
 # no RC watchdog patch in production set
 if grep -R 'WATCHDOG_GPFIFO_ENTRIES' "$root/patches/base" "$root/patches/addon" >/dev/null 2>&1; then

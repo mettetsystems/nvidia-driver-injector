@@ -19,6 +19,13 @@ assert_eq "$dtag" "610.57.04" "Dockerfile ARG NVIDIA_OPEN_TAG"
 composed="$(nvidia_composed_module_version "$root")"
 assert_eq "$composed" "610.57.04-apnex.1" "composed module version"
 
+assert_eq "$(NVIDIA_LOADED_VERSION=610.57.04 nvidia_loaded_module_version)" \
+    "610.57.04" "NVIDIA_LOADED_VERSION override (stock)"
+assert_eq "$(NVIDIA_LOADED_VERSION=610.57.04-apnex.1 nvidia_loaded_module_version)" \
+    "610.57.04-apnex.1" "NVIDIA_LOADED_VERSION override (patched)"
+assert_eq "$(NVIDIA_LOADED_VERSION= nvidia_loaded_module_version)" \
+    "(not loaded)" "NVIDIA_LOADED_VERSION empty means not loaded"
+
 nvidia_version_validate_tag "610.57.04"
 assert_eq "$?" "0" "validate 610.57.04"
 nvidia_version_validate_tag "595.71.05"

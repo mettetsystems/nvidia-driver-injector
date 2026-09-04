@@ -16,9 +16,10 @@ Before=docker.service
 # down. Operator can add a docker.service override if they want
 # stricter coupling.
 
-# No ConditionPathExists: script auto-detects the AORUS GPU's parent
-# bridge regardless of TB4 port (different BDF per port). If the GPU
-# isn't present, the script is a fast no-op (clean exit 0).
+# On lockdown != none, apply fails (WRITE_BLOCKED) unless LnkCtl2
+# already matches the cap (in-driver A13 succeeded). RemainAfterExit
+# is not proof the cap is in force — use helper `status` / status-r610.sh.
+# Do not disable Secure Boot or kernel lockdown to make this unit pass.
 
 [Service]
 Type=oneshot

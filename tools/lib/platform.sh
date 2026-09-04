@@ -200,3 +200,114 @@ platform_cmdline_profile() {
 platform_f44_linux71_forbidden_cmdline_tokens() {
     printf '%s\n' iommu=off intel_iommu=off
 }
+
+# Current kernel lockdown mode from /sys/kernel/security/lockdown.
+# File format: "none [integrity] confidentiality" — bracketed token is active.
+# Prints none | integrity | confidentiality | unknown
+platform_lockdown_mode() {
+    local f="${1:-${LOCKDOWN_FILE:-/sys/kernel/security/lockdown}}"
+    local raw
+    [ -r "$f" ] || { printf 'unknown\n'; return 0; }
+    raw="$(tr -d '\n' < "$f")"
+    if [[ "$raw" =~ \[([a-z]+)\] ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    printf 'unknown\n'
+}
+
+# Classify H17 from lockdown + LnkCtl2 hex (no PCI writes).
+# Prints WRITE_BLOCKED | VERIFY_FAILED | PASS
+# Optional target speed (default 3). bit5 must be 1 and TLS must match.
+platform_h17_state_from() {
+    local mode="$1"
+    local hex="$2"
+    local want="${3:-3}"
+    local int target bit5
+    hex="${hex#0x}"
+    if [ -z "$hex" ]; then
+        if [ "$mode" != "none" ] && [ "$mode" != "unknown" ]; then
+            printf 'WRITE_BLOCKED\n'
+        else
+            printf 'VERIFY_FAILED\n'
+        fi
+        return 0
+    fi
+    int=$((16#$hex))
+    target=$(( int & 0xF ))
+    bit5=$(( (int >> 5) & 1 ))
+    if [ "$bit5" -eq 1 ] && [ "$target" -eq "$want" ]; then
+        printf 'PASS\n'
+        return 0
+    fi
+    if [ "$mode" != "none" ] && [ "$mode" != "unknown" ]; then
+        printf 'WRITE_BLOCKED\n'
+        return 0
+    fi
+    printf 'VERIFY_FAILED\n'
+}
+
+# Live H17 classifier (read-only setpci). Optional bridge BDF.
+platform_h17_state() {
+    local bridge="${1:-}"
+    local mode hex
+    local setpci_bin="${SETPCI:-setpci}"
+    mode="$(platform_lockdown_mode)"
+    if [ -z "$bridge" ]; then
+        local bdfs first
+        bdfs="$(platform_find_gb202_bdfs || true)"
+        first="$(printf '%s\n' "$bdfs" | head -n1)"
+        if [ -n "$first" ]; then
+            bridge="$(platform_upstream_bridge_bdf "/sys/bus/pci/devices/$first" 2>/dev/null || true)"
+        fi
+    fi
+    if [ -n "$bridge" ]; then
+        hex="$("$setpci_bin" -s "$bridge" CAP_EXP+0x30.W 2>/dev/null || true)"
+    fi
+    platform_h17_state_from "$mode" "${hex:-}"
+}
+
+# Secure Boot state: enabled | disabled | unknown
+# Optional path argument, or SECURE_BOOT_FILE. A text fixture may contain
+# those words. Otherwise the EFI SecureBoot variable (byte 4) is read.
+platform_secure_boot_state() {
+    local f="${1:-${SECURE_BOOT_FILE:-}}"
+    local raw v
+    if [ -z "$f" ]; then
+        f="/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c"
+    fi
+    [ -r "$f" ] || { printf 'unknown\n'; return 0; }
+    raw="$(tr -d '\n' < "$f" | tr -d ' \t')"
+    case "$raw" in
+        enabled|disabled|unknown)
+            printf '%s\n' "$raw"
+            return 0
+            ;;
+    esac
+    v="$(od -An -t u1 -N 5 "$f" 2>/dev/null | awk '{print $5}')"
+    case "$v" in
+        1) printf 'enabled\n' ;;
+        0) printf 'disabled\n' ;;
+        *) printf 'unknown\n' ;;
+    esac
+}
+
+# Milestone B H17 readiness from lockdown + live classifier + loaded module.
+# Prints STOCK_DRIVER_PENDING_A13 | PATCHED_DRIVER_H17_PASS | PATCHED_DRIVER_H17_FAIL
+# Args: lockdown_mode h17_state loaded_version expected_patched_version
+platform_h17_deployment_state() {
+    local lockdown="$1"
+    local h17="$2"
+    local loaded="$3"
+    local patched="$4"
+    : "$lockdown"
+    if [ "$h17" = "PASS" ]; then
+        printf 'PATCHED_DRIVER_H17_PASS\n'
+        return 0
+    fi
+    if [ -n "$patched" ] && [ "$loaded" = "$patched" ]; then
+        printf 'PATCHED_DRIVER_H17_FAIL\n'
+        return 0
+    fi
+    printf 'STOCK_DRIVER_PENDING_A13\n'
+}

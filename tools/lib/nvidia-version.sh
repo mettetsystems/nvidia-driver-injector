@@ -83,3 +83,23 @@ nvidia_composed_module_version() {
     nvidia_version_load "$root" || return 1
     echo "${NVIDIA_OPEN_TAG}-$(nvidia_module_branch_suffix)"
 }
+
+# Currently loaded nvidia.ko version string, or "(not loaded)".
+# Tests may set NVIDIA_LOADED_VERSION (including empty → "(not loaded)")
+# to avoid calling modinfo / reading live /proc/modules.
+nvidia_loaded_module_version() {
+    local proc="${PROC_MODULES:-/proc/modules}"
+    if [ "${NVIDIA_LOADED_VERSION+set}" = "set" ]; then
+        if [ -n "$NVIDIA_LOADED_VERSION" ]; then
+            printf '%s\n' "$NVIDIA_LOADED_VERSION"
+        else
+            printf '(not loaded)\n'
+        fi
+        return 0
+    fi
+    if grep -E '^nvidia ' "$proc" >/dev/null 2>&1; then
+        modinfo -F version nvidia 2>/dev/null || printf 'unknown\n'
+    else
+        printf '(not loaded)\n'
+    fi
+}

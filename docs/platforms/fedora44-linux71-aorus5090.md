@@ -86,7 +86,7 @@ eGPU-only globals.
 | `NVreg_TbEgpuRecoverEnable=1` | kept (master switch) | kept |
 | A2 Q-watchdog / A3 recovery / AER | **GB202 `10de:2b85` only** | same |
 | udev `80-…-disable-audio.rules` | `10de:22e8` only | same |
-| Bridge LnkCtl2 | parent of `10de:2b85` | same |
+| Bridge LnkCtl2 (H17) | in-driver A13 on parent of `10de:2b85` | same; userspace setpci is fallback only if lockdown=`none` |
 | `NVreg_DynamicPowerManagement=0` | global (2070 loses driver RTD3) | same |
 | `PreserveVideoMemoryAllocations=0` | **not in base conf** | overlay |
 
@@ -109,6 +109,25 @@ sudo ./scripts/apply.sh --skip-cmdline --skip-icd --no-act
 
 Do **not** `docker compose up` / `modprobe` without reading
 [`../r610-rollback.md`](../r610-rollback.md).
+
+## H17 / kernel lockdown
+
+Observed on this workstation (Secure Boot enabled):
+
+```
+/sys/kernel/security/lockdown  →  none [integrity] confidentiality
+LnkCtl2 on 0000:8c:00.0        →  0x0041   (want 0x0063 = Gen3 + HASD)
+setpci CAP_EXP+30.w=0063       →  Operation not permitted
+```
+
+`LOCKDOWN_PCI_ACCESS` is included in integrity mode. That blocks
+**userspace** sysfs PCI config writes. It does **not** block in-kernel
+`pcie_capability_*` from a signed `nvidia.ko`.
+
+Do **not** turn off Secure Boot or lockdown to “fix” H17. Addon **A13**
+applies the cap at GB202 probe. Until that module is loaded,
+`status-r610.sh` must report `H17=WRITE_BLOCKED` — not a false PASS from
+systemd `RemainAfterExit`.
 
 ## Podman (preferred on this workstation)
 

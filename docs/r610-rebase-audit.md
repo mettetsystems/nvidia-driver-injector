@@ -86,7 +86,7 @@ id  layer  upstreamed_in  source
 
 Lint: `tools/lib/manifest.sh` (`manifest_lint`). Compose: `tools/compose-patchset.sh`. Regen: `tools/regen-base-patches.sh` (requires a fork whose stacked branches descend from the target tag).
 
-All 19 production rows currently have `upstreamed_in = -`.
+All 20 production rows currently have `upstreamed_in = -`.
 
 ---
 
@@ -120,8 +120,9 @@ C6 is first because A10/A11 `COND_ACQUIRE` is unsafe until the rwsem polarity is
 17. `A11-f45-deadlock-breaker`  *(before A10 on purpose)*
 18. `A10-f40b-lockfree-sink`
 19. `A12-init-funnel`
+20. `A13-h17-bridge-cap`
 
-A12 subsumes the A6 open-path wrapper at the GSP-bootstrap funnel. A6 remains in the manifest for bisectability and because A12 deletes the A6-specific wrapper rather than rewriting A6 in place.
+A12 subsumes the A6 open-path wrapper at the GSP-bootstrap funnel. A6 remains in the manifest for bisectability and because A12 deletes the A6-specific wrapper rather than rewriting A6 in place. A13 is last so earlier nv_pci_probe hunks stay valid; it applies H17 in-driver because userspace setpci is blocked by lockdown=integrity.
 
 `patches/legacy/` and `patches/experimental/` are **not** in the production apply list.
 
@@ -315,7 +316,14 @@ globally disable ICDs, `nvidia_drm`, or module autoload on this fixture.
 
 ## 17. Existing bridge-cap handling
 
-Layer 1 systemd unit `nvidia-driver-injector-bridge-link-cap.service` (`Before=docker.service`) caps the upstream TB bridge `LnkCtl2` max-target-speed (Lever H17 / issue #979 Gen3 GSP-boot freeze). Script: `scripts/host-files/usr/local/sbin/nvidia-driver-injector-bridge-link-cap`. Discovers the GPU by `10de:2b85` then walks to the parent bridge — BDF is **not** hardcoded in the generic path. Documented in `docs/bridge-link-cap-mechanism.md`.
+Userspace `nvidia-driver-injector-bridge-link-cap.service` is **not**
+authoritative on Fedora 44 + 7.1 with Secure Boot: lockdown=`integrity`
+blocks sysfs PCI config writes (`WRITE_BLOCKED`). Failed writes are
+fatal. Production H17 is in-driver **A13** (`tb_egpu_h17_apply` at
+GB202 `nv_pci_probe`, `10de:2b85` + TB/USB4 only). The helper remains
+for `status` / lockdown=`none` fallback. Discover GPU by `10de:2b85`
+then the parent bridge — BDF is not hardcoded. See
+[`bridge-link-cap-mechanism.md`](bridge-link-cap-mechanism.md).
 
 ---
 

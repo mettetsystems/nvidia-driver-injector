@@ -2,7 +2,20 @@
 
 ## TL;DR
 
-The "cap" the bridge-link-cap service applies has TWO simultaneous
+**On Fedora 44 + Linux 7.1 with Secure Boot, userspace `setpci` cannot
+apply this cap.** Kernel lockdown is `integrity`, which includes
+`LOCKDOWN_PCI_ACCESS`. Writes to `/sys/bus/pci/devices/.../config`
+fail with `Operation not permitted`. The helper must treat that as
+**WRITE_BLOCKED**, not success.
+
+**Production path:** in-driver addon **A13** (`tb_egpu_h17_apply`) in
+the patched `nvidia.ko` probe, using `pcie_capability_*` on the GB202
+(`10de:2b85`) upstream bridge only. Do **not** disable Secure Boot or
+lockdown. The userspace helper is diagnostic / fallback only when
+lockdown is `none`, or a status tool after the in-driver cap has
+already produced `LnkCtl2=0x0063`.
+
+The "cap" the bridge-link-cap path applies has TWO simultaneous
 effects:
 
 1. **Stability:** the boot-time retrain handshake between the TB
@@ -46,8 +59,14 @@ it does NOT move the tunnel rate.
 ## What the cap binary writes
 
 `/usr/local/sbin/nvidia-driver-injector-bridge-link-cap apply`
-performs three register writes against the GPU's parent bridge
-(`vendor:device == 0x10de:0x2b85`'s `dirname` in /sys/bus/pci):
+is **not authoritative** when kernel lockdown is `integrity` or
+`confidentiality`. Failed PCI writes are fatal (`H17=WRITE_BLOCKED` /
+`WRITE_FAILED` / `VERIFY_FAILED`). systemd `RemainAfterExit=yes` is
+not proof the cap is in force.
+
+When lockdown is `none`, the helper performs three register writes
+against the GPU's parent bridge (`vendor:device == 0x10de:0x2b85`'s
+`dirname` in PCI sysfs):
 
 1. Read LnkCtl2 (PCIe Express Capability offset 0x30, word).
 2. Set bit 5 (Hardware Autonomous Speed Disable) in LnkCtl2.

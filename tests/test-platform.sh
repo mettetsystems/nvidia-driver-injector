@@ -66,6 +66,20 @@ assert_contains "$plan2" "icd_disable=apply" "egpu-only host may disable ICDs"
 assert_contains "$plan2" "compute_only_overlay=apply" "egpu-only host gets compute-only overlay"
 assert_contains "$plan2" "drm_modeset=0" "egpu-only host sets nvidia_drm modeset=0"
 
+printf 'none [integrity] confidentiality\n' > "$os/ld"
+assert_eq "$(platform_lockdown_mode "$os/ld")" "integrity" "lockdown parser integrity"
+assert_eq "$(platform_h17_state_from integrity 0041)" "WRITE_BLOCKED" "H17 classifier WRITE_BLOCKED"
+
+assert_eq "$(platform_h17_deployment_state integrity WRITE_BLOCKED 610.57.04 610.57.04-apnex.1)" \
+    "STOCK_DRIVER_PENDING_A13" "deployment: stock under lockdown is PENDING"
+assert_eq "$(platform_h17_deployment_state integrity PASS 610.57.04-apnex.1 610.57.04-apnex.1)" \
+    "PATCHED_DRIVER_H17_PASS" "deployment: patched + PASS"
+assert_eq "$(platform_h17_deployment_state integrity WRITE_BLOCKED 610.57.04-apnex.1 610.57.04-apnex.1)" \
+    "PATCHED_DRIVER_H17_FAIL" "deployment: patched + not PASS is FAIL"
+
+printf 'enabled\n' > "$os/sb"
+assert_eq "$(platform_secure_boot_state "$os/sb")" "enabled" "secure boot fixture enabled"
+
 assert_eq "$(platform_cmdline_profile 'BOOT iommu=pt quiet')" "f44-linux71" "iommu=pt profile"
 assert_eq "$(platform_cmdline_profile 'BOOT iommu=off quiet')" "nuc-tb4" "iommu=off profile"
 assert_eq "$(platform_cmdline_profile 'BOOT quiet')" "unknown" "unknown profile"

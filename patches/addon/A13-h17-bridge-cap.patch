@@ -1,0 +1,202 @@
+# Patch:  A13-h17-bridge-cap
+# Source: hand-authored for R610 / Linux 7.1 (lockdown-safe H17)
+# Base:   stacked production set through A12-init-funnel
+#
+diff --git a/kernel-open/nvidia/nv-pci.c b/kernel-open/nvidia/nv-pci.c
+index 11111111..22222222 100644
+--- a/kernel-open/nvidia/nv-pci.c
++++ b/kernel-open/nvidia/nv-pci.c
+@@ -30,6 +30,7 @@
+ #include "nv-tb-egpu-qwd.h"      /* tb_egpu Q-watchdog (addon A2) */
+ #include "nv-tb-egpu-recover.h"  /* tb_egpu recovery state machine (addon A3) */
+ #include "nv-tb-egpu-metrics.h"  /* tb_egpu F40b sysfs observability (addon A8) */
++#include "nv-tb-egpu-h17.h"      /* tb_egpu H17 bridge LnkCtl2 cap (addon A13) */
+ 
+ #if defined(NV_VGPU_KVM_BUILD)
+ #include "nv-vgpu-vfio-interface.h"
+@@ -2140,6 +2141,16 @@
+     nvl->dma_dev.dev       = nvl->dev;
+ 
+     /*
++     * tb_egpu H17 (addon A13): cap the GB202 upstream bridge LnkCtl2
++     * (HASD + Target=Gen3) before GSP init. Userspace setpci cannot
++     * write PCI config under kernel lockdown integrity. Failure here
++     * fails only this GB202 probe — an internal display GPU is never
++     * passed into tb_egpu_h17_apply's write path.
++     */
++    if (tb_egpu_h17_apply(pci_dev))
++        goto failed;
++
++    /*
+      * tb_egpu recovery state machine (addon A3): allocate per-pdev
+      * recovery state early so the probe-time WPR2 check below has
+      * nvl->recover available. Failure is non-fatal — recover stays
+diff --git a/kernel-open/nvidia/nvidia-sources.Kbuild b/kernel-open/nvidia/nvidia-sources.Kbuild
+index 11111111..22222222 100644
+--- a/kernel-open/nvidia/nvidia-sources.Kbuild
++++ b/kernel-open/nvidia/nvidia-sources.Kbuild
+@@ -16,6 +16,7 @@
+ NVIDIA_SOURCES += nvidia/nv-tb-egpu-recover.c
+ NVIDIA_SOURCES += nvidia/nv-tb-egpu-close.c
+ NVIDIA_SOURCES += nvidia/nv-tb-egpu-metrics.c
++NVIDIA_SOURCES += nvidia/nv-tb-egpu-h17.c
+ NVIDIA_SOURCES += nvidia/nv-dmabuf.c
+ NVIDIA_SOURCES += nvidia/nv-nano-timer.c
+ NVIDIA_SOURCES += nvidia/nv-acpi.c
+diff --git a/kernel-open/nvidia/nv-tb-egpu-h17.c b/kernel-open/nvidia/nv-tb-egpu-h17.c
+new file mode 100644
+index 00000000..11111111
+--- /dev/null
++++ b/kernel-open/nvidia/nv-tb-egpu-h17.c
+@@ -0,0 +1,126 @@
++/*
++ * SPDX-FileCopyrightText: nvidia-driver-injector contributors
++ * SPDX-License-Identifier: MIT
++ *
++ * nv-tb-egpu-h17.c — Lever H17: set LnkCtl2 HASD + Target Link Speed
++ * on the immediate upstream bridge of a GB202 Thunderbolt/USB4 eGPU.
++ *
++ * Must not touch an internal NVIDIA display GPU (e.g. RTX 2070).
++ * Independent of NVreg_TbEgpuRecoverEnable.
++ */
++
++#include "nv-tb-egpu-h17.h"
++
++#include <linux/module.h>
++#include <linux/pci.h>
++#include <linux/pci_regs.h>
++#include <linux/types.h>
++
++#define TB_EGPU_H17_GB202  0x2b85
++
++static unsigned int NVreg_TbEgpuH17Enable = 1;
++module_param(NVreg_TbEgpuH17Enable, uint, 0644);
++MODULE_PARM_DESC(NVreg_TbEgpuH17Enable,
++    "tb_egpu: apply H17 LnkCtl2 cap (HASD + Target) on the GB202 "
++    "upstream bridge at probe (1 = on (default), 0 = off)");
++
++static unsigned int NVreg_TbEgpuH17TargetSpeed = 3;
++module_param(NVreg_TbEgpuH17TargetSpeed, uint, 0644);
++MODULE_PARM_DESC(NVreg_TbEgpuH17TargetSpeed,
++    "tb_egpu: H17 PCI_EXP_LNKCTL2_TLS value (default 3 = Gen3). "
++    "4 = Gen4 is known-dangerous on this TB path.");
++
++static bool tb_egpu_h17_is_gb202(const struct pci_dev *pdev)
++{
++    return pdev && pdev->vendor == PCI_VENDOR_ID_NVIDIA &&
++           pdev->device == TB_EGPU_H17_GB202;
++}
++
++static bool tb_egpu_h17_is_tb_path(struct pci_dev *pdev)
++{
++    return pdev && (pci_is_thunderbolt_attached(pdev) || pdev->untrusted);
++}
++
++int tb_egpu_h17_apply(struct pci_dev *gpu)
++{
++    struct pci_dev *bridge;
++    u16 lnkctl2, want_tls, got, want;
++    int rc;
++
++    if (!NVreg_TbEgpuH17Enable)
++        return 0;
++
++    if (!tb_egpu_h17_is_gb202(gpu))
++        return 0;
++
++    if (!tb_egpu_h17_is_tb_path(gpu))
++    {
++        pci_info(gpu,
++                 "tb_egpu H17: skip (GB202 not on Thunderbolt/USB4 path)\n");
++        return 0;
++    }
++
++    bridge = pci_upstream_bridge(gpu);
++    if (!bridge)
++    {
++        pci_err(gpu, "tb_egpu H17: no upstream bridge\n");
++        return -ENODEV;
++    }
++
++    want_tls = (u16)(NVreg_TbEgpuH17TargetSpeed & PCI_EXP_LNKCTL2_TLS);
++    if (want_tls == 0)
++        want_tls = PCI_EXP_LNKCTL2_TLS_8_0GT;
++
++    rc = pcie_capability_read_word(bridge, PCI_EXP_LNKCTL2, &lnkctl2);
++    if (rc)
++    {
++        pci_err(bridge, "tb_egpu H17: LnkCtl2 read failed rc=%d\n", rc);
++        return rc;
++    }
++
++    want = (u16)((lnkctl2 & ~(PCI_EXP_LNKCTL2_TLS | PCI_EXP_LNKCTL2_HASD)) |
++                 want_tls | PCI_EXP_LNKCTL2_HASD);
++
++    pci_info(bridge,
++             "tb_egpu H17: LnkCtl2 0x%04x -> 0x%04x (HASD + TLS=Gen%u) "
++             "for GB202 %s\n",
++             lnkctl2, want, want_tls, pci_name(gpu));
++
++    rc = pcie_capability_clear_and_set_word(bridge, PCI_EXP_LNKCTL2,
++                                            PCI_EXP_LNKCTL2_TLS |
++                                                PCI_EXP_LNKCTL2_HASD,
++                                            want_tls | PCI_EXP_LNKCTL2_HASD);
++    if (rc)
++    {
++        pci_err(bridge, "tb_egpu H17: LnkCtl2 write failed rc=%d\n", rc);
++        return rc;
++    }
++
++    rc = pcie_capability_read_word(bridge, PCI_EXP_LNKCTL2, &got);
++    if (rc)
++    {
++        pci_err(bridge, "tb_egpu H17: LnkCtl2 readback failed rc=%d\n", rc);
++        return rc;
++    }
++
++    if ((got & PCI_EXP_LNKCTL2_HASD) == 0 ||
++        (got & PCI_EXP_LNKCTL2_TLS) != want_tls)
++    {
++        pci_err(bridge,
++                "tb_egpu H17: VERIFY_FAILED LnkCtl2=0x%04x "
++                "(need HASD=1 TLS=0x%x)\n",
++                got, want_tls);
++        return -EIO;
++    }
++
++    rc = pcie_capability_set_word(bridge, PCI_EXP_LNKCTL, PCI_EXP_LNKCTL_RL);
++    if (rc)
++    {
++        pci_err(bridge, "tb_egpu H17: retrain (LnkCtl.RL) failed rc=%d\n", rc);
++        return rc;
++    }
++
++    pci_info(bridge, "tb_egpu H17: PASS LnkCtl2=0x%04x retrain requested\n",
++             got);
++    return 0;
++}
+diff --git a/kernel-open/nvidia/nv-tb-egpu-h17.h b/kernel-open/nvidia/nv-tb-egpu-h17.h
+new file mode 100644
+index 00000000..11111111
+--- /dev/null
++++ b/kernel-open/nvidia/nv-tb-egpu-h17.h
+@@ -0,0 +1,19 @@
++/*
++ * SPDX-FileCopyrightText: nvidia-driver-injector contributors
++ * SPDX-License-Identifier: MIT
++ *
++ * nv-tb-egpu-h17.h — Lever H17 bridge LnkCtl2 cap (addon A13).
++ *
++ * Userspace setpci cannot write PCI config under kernel lockdown
++ * integrity (Fedora Secure Boot). Apply HASD + Target=Gen3 on the
++ * GB202 eGPU's upstream bridge from nvidia.ko probe, before GSP init.
++ */
++
++#ifndef _NV_TB_EGPU_H17_H_
++#define _NV_TB_EGPU_H17_H_
++
++struct pci_dev;
++
++int tb_egpu_h17_apply(struct pci_dev *gpu);
++
++#endif /* _NV_TB_EGPU_H17_H_ */

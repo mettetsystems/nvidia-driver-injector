@@ -29,6 +29,8 @@ else
         echo "    $b  BAR1=${bar}  bridge=$br"
     done
 fi
+echo "  lockdown=$(platform_lockdown_mode)"
+echo "  H17=$(platform_h17_state)"
 echo "  compute-only plan:"
 platform_compute_only_plan | sed 's/^/    /'
 if grep -E '^nvidia ' /proc/modules >/dev/null 2>&1; then
