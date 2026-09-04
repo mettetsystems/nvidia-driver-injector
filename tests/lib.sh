@@ -32,6 +32,28 @@ assert_exit() {  # expected-code message -- command...
     fi
 }
 
+assert_contains() {  # haystack needle message
+    _tests_run=$((_tests_run + 1))
+    if printf '%s' "$1" | grep -q -- "$2"; then
+        printf '  ok   %s\n' "$3"
+    else
+        _tests_failed=$((_tests_failed + 1))
+        printf '  FAIL %s\n' "$3"
+        printf '       missing: [%s]\n' "$2"
+    fi
+}
+
+assert_file_contains() {  # file needle message
+    _tests_run=$((_tests_run + 1))
+    if grep -q -- "$2" "$1"; then
+        printf '  ok   %s\n' "$3"
+    else
+        _tests_failed=$((_tests_failed + 1))
+        printf '  FAIL %s\n' "$3"
+        printf '       file %s missing: [%s]\n' "$1" "$2"
+    fi
+}
+
 finish_tests() {
     printf '%s: %d run, %d failed\n' "${0##*/}" "$_tests_run" "$_tests_failed"
     [ "$_tests_failed" -eq 0 ]
