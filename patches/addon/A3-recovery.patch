@@ -1419,8 +1419,8 @@ diff --git a/kernel-open/nvidia/nv.c b/kernel-open/nvidia/nv.c
 index 6028afa4..a3be65ff 100644
 --- a/kernel-open/nvidia/nv.c
 +++ b/kernel-open/nvidia/nv.c
-@@ -55,6 +55,7 @@
- #include "nv-pat.h"
+@@ -54,6 +54,7 @@
+ #include "nv-kthread-q.h"
  #include "nv-dmabuf.h"
  #include "nv-caps-imex.h"
 +#include "nv-tb-egpu-recover.h"  /* tb_egpu recovery (addon A3) */
