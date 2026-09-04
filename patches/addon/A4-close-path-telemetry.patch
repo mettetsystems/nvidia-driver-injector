@@ -198,8 +198,7 @@ diff --git a/kernel-open/nvidia-uvm/nvidia-uvm-sources.Kbuild b/kernel-open/nvid
 index fd4d5c27..f2f85ed8 100644
 --- a/kernel-open/nvidia-uvm/nvidia-uvm-sources.Kbuild
 +++ b/kernel-open/nvidia-uvm/nvidia-uvm-sources.Kbuild
-@@ -3,6 +3,7 @@ NVIDIA_UVM_SOURCES_CXX ?=
- 
+@@ -6,5 +6,6 @@ NVIDIA_UVM_SOURCES += nvidia-uvm/uvm_rubin_mmu.c
  NVIDIA_UVM_SOURCES += nvidia-uvm/uvm_common.c
  NVIDIA_UVM_SOURCES += nvidia-uvm/uvm_linux.c
 +NVIDIA_UVM_SOURCES += nvidia-uvm/nv-tb-egpu-uvm.c
