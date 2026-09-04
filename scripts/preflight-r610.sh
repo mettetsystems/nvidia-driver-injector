@@ -162,24 +162,24 @@ h17_live="$(platform_h17_state)"
 patched="$(nvidia_composed_module_version "$REPO_ROOT")"
 loaded="$(nvidia_loaded_module_version)"
 deploy="$(platform_h17_deployment_state "$h17_ld" "$h17_live" "$loaded" "$patched")"
-h17_display="$h17_live"
+h17_deploy="unknown"
 readiness="FAIL"
 
 case "$deploy" in
     STOCK_DRIVER_PENDING_A13)
         info "H17 pending A13 activation; stock module currently loaded ($loaded)."
-        info "This is expected before Milestone B."
-        h17_display="PENDING_A13"
-        readiness="PASS for Milestone B"
+        info "This is expected before Milestone B; live LnkCtl2 is still $h17_live."
+        h17_deploy="PENDING_A13"
+        readiness="expected (stock driver)"
         ;;
     PATCHED_DRIVER_H17_PASS)
         ok "patched driver $loaded; H17 readback verified"
-        h17_display="PASS"
+        h17_deploy="PASS"
         readiness="PASS"
         ;;
     PATCHED_DRIVER_H17_FAIL)
         fail "patched driver loaded ($loaded) but H17 verification failed (H17=${h17_live})"
-        h17_display="$h17_live"
+        h17_deploy="FAIL"
         readiness="FAIL"
         ;;
 esac
@@ -194,13 +194,14 @@ else
 fi
 
 echo
-echo "  --- H17 / Milestone B ---"
+echo "  --- H17 ---"
 printf '  %-24s %s\n' "Secure Boot" "$sb"
 printf '  %-24s %s\n' "kernel lockdown" "$h17_ld"
 printf '  %-24s %s\n' "userspace H17" "$us_h17"
 printf '  %-24s %s\n' "A13 kernel H17" "$a13_status"
 printf '  %-24s %s\n' "loaded module" "$loaded"
-printf '  %-24s %s\n' "live H17" "$h17_display"
+printf '  %-24s %s\n' "live H17" "$h17_live"
+printf '  %-24s %s\n' "H17 deploy" "$h17_deploy"
 printf '  %-24s %s\n' "H17 readiness" "$readiness"
 
 sign_key="$(r610_mok_key_state)"
@@ -238,21 +239,44 @@ printf '  %-24s %s\n' "patched modules signed" "$sign_signed"
 printf '  %-24s %s\n' "Milestone B readiness" "$mb_ready"
 
 if [ "$sb" = "enabled" ]; then
-    if [ "$sign_key" != "available" ]; then
-        fail "signing private key unavailable under Secure Boot (akmods/DKMS/R610_MOK_KEY); do not disable Secure Boot"
+    if [ "$sign_key" = "unreadable" ] || [ "$sign_cert" = "unreadable" ]; then
+        warn "signing key/cert exist but are not readable as uid $(id -u); re-run as root (akmods is typically root:akmods) or set R610_MOK_KEY/R610_MOK_CERT. Do not import a new MOK."
+    else
+        if [ "$sign_key" != "available" ]; then
+            fail "signing private key unavailable under Secure Boot (akmods/DKMS/R610_MOK_KEY); do not disable Secure Boot"
+        fi
+        if [ "$sign_cert" != "available" ]; then
+            fail "signing certificate unavailable under Secure Boot; do not disable Secure Boot"
+        fi
     fi
-    if [ "$sign_cert" != "available" ]; then
-        fail "signing certificate unavailable under Secure Boot; do not disable Secure Boot"
-    fi
-    if [ "$sign_enrolled" != "PASS" ]; then
-        fail "signing certificate is not enrolled in MOK; enroll it (mokutil --import), do not disable Secure Boot"
-    fi
-    if [ "$sign_signed" != "PASS" ]; then
-        fail "patched modules are not a fully signed set (H17 A13 requires signed nvidia.ko under Secure Boot)"
-    fi
+    case "$sign_enrolled" in
+        PASS) ;;
+        FAIL)
+            fail "signing certificate is not enrolled in MOK; enroll it (mokutil --import), do not disable Secure Boot"
+            ;;
+        *)
+            if [ "$sign_cert" = "unreadable" ] || [ "$sign_key" = "unreadable" ]; then
+                warn "cannot test MOK enrollment without a readable certificate; re-run as root. Do not import a new MOK unless mokutil --test-key fails as root."
+            elif [ "$sign_cert" != "unavailable" ]; then
+                warn "cannot test MOK enrollment (readable cert and mokutil required). Do not import a new MOK unless mokutil --test-key fails as root."
+            fi
+            ;;
+    esac
+    case "$sign_built:$sign_signed" in
+        no:*)
+            info "patched modules are not built yet (expected before Milestone B); export then sign after the injector build"
+            ;;
+        yes:PASS) ;;
+        yes:FAIL)
+            fail "patched modules are a mixed or invalid signed set (refusing stock/patched mix)"
+            ;;
+        yes:*)
+            fail "patched modules are built but not a fully signed set (H17 A13 requires signed nvidia.ko under Secure Boot)"
+            ;;
+    esac
 fi
 if [ "$mb_ready" != "PASS" ] && [ "$sb" = "enabled" ]; then
-    info "build-only/sign-only: scripts/export-r610-modules.sh then scripts/sign-r610-modules.sh"
+    info "Milestone B is not ready until a signed patched set exists: scripts/export-r610-modules.sh then scripts/sign-r610-modules.sh"
 fi
 
 fw="/lib/firmware/nvidia/${NVIDIA_OPEN_TAG}"

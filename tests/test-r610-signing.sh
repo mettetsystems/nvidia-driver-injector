@@ -186,6 +186,20 @@ assert_eq "$(r610_sign_hash_algo)" "sha512" "hash algo from kernel config"
 export R610_MOK_KEY="$os/missing.key" R610_MOK_CERT="$os/missing.cert"
 assert_eq "$(r610_mok_key_state)" "unavailable" "missing signing key"
 assert_eq "$(r610_mok_cert_state)" "unavailable" "missing signing certificate"
+assert_eq "$(r610_cert_enrolled_state)" "UNKNOWN" \
+    "enrollment is UNKNOWN when the certificate is not readable"
+
+# Unreadable (present, this uid cannot read) is not "missing" and not "unenrolled".
+mkdir -p "$os/locked"
+printf 'x\n' > "$os/locked/key.pem"
+printf 'x\n' > "$os/locked/cert.der"
+chmod a-rwx "$os/locked/key.pem" "$os/locked/cert.der"
+export R610_MOK_KEY="$os/locked/key.pem" R610_MOK_CERT="$os/locked/cert.der"
+assert_eq "$(r610_mok_key_state)" "unreadable" "unreadable signing key"
+assert_eq "$(r610_mok_cert_state)" "unreadable" "unreadable signing certificate"
+assert_eq "$(r610_cert_enrolled_state)" "UNKNOWN" \
+    "enrollment is UNKNOWN when the certificate exists but is unreadable"
+chmod u+rw "$os/locked/key.pem" "$os/locked/cert.der"
 
 printf 'enabled\n' > "$os/sb"
 write_set "$os/unsigned"
@@ -269,6 +283,10 @@ assert_eq "$(r610_milestone_b_sign_readiness enabled available available PASS ye
     "Milestone B FAIL when SB on and unsigned"
 assert_eq "$(r610_milestone_b_sign_readiness enabled unavailable unavailable FAIL no PENDING)" "FAIL" \
     "Milestone B FAIL when key/cert missing under SB"
+assert_eq "$(r610_milestone_b_sign_readiness enabled unreadable unreadable UNKNOWN no PENDING)" "FAIL" \
+    "Milestone B FAIL when key/cert unreadable and modules not built"
+assert_eq "$(r610_milestone_b_sign_readiness enabled available available PASS no PENDING)" "FAIL" \
+    "Milestone B FAIL when enrolled but patched modules are not built yet"
 
 # --- Secure Boot disabled: unsigned is allowed ---
 printf 'disabled\n' > "$os/sb"
@@ -276,7 +294,7 @@ assert_exit 0 "verify unsigned set allowed when Secure Boot disabled" \
     env SECURE_BOOT_FILE="$os/sb" MOKUTIL="$os/mokutil-fail" \
         MODINFO="$os/modinfo" R610_MOK_CERT="$os/cert.pem" \
         bash "$root/scripts/verify-r610-signatures.sh" --dir "$os/unsigned"
-assert_eq "$(r610_milestone_b_sign_readiness disabled unavailable unavailable FAIL no PENDING)" "PASS" \
+assert_eq "$(r610_milestone_b_sign_readiness disabled unavailable unavailable UNKNOWN no PENDING)" "PASS" \
     "Milestone B PASS when Secure Boot disabled (signing optional)"
 assert_eq "$(r610_sign_gate "$os/unsigned" "610.57.04-apnex.1" && echo ok)" "ok" \
     "sign gate permits unsigned when Secure Boot disabled"

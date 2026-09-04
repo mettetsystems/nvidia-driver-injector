@@ -64,8 +64,9 @@ if printf '%s' "$stock_body" | grep -qE '^[[:space:]]+fail '; then
 else
     assert_eq "1" "1" "stock PENDING_A13 must not fail preflight"
 fi
-assert_contains "$stock_body" "PASS for Milestone B" "PENDING readiness is PASS for Milestone B"
-assert_contains "$stock_body" "PENDING_A13" "PENDING displays live H17=PENDING_A13"
+assert_contains "$stock_body" "expected (stock driver)" "PENDING readiness is expected stock, not Milestone B PASS"
+assert_contains "$stock_body" "PENDING_A13" "PENDING records H17 deploy=PENDING_A13"
+assert_contains "$stock_body" 'h17_live' "PENDING keeps live H17 as the hardware classifier"
 
 fail_body="$(awk '/PATCHED_DRIVER_H17_FAIL)/,/^esac/' "$pf")"
 assert_contains "$fail_body" 'fail "' "patched H17 failure fail-closes preflight"
@@ -84,11 +85,34 @@ assert_file_contains "$pf" 'blocked by lockdown' "reports userspace H17 blocked 
 assert_file_contains "$pf" 'A13 kernel H17' "reports A13 kernel H17"
 assert_file_contains "$pf" 'loaded module' "reports loaded module"
 assert_file_contains "$pf" 'live H17' "reports live H17"
+assert_file_contains "$pf" 'H17 deploy' "reports H17 deploy"
 assert_file_contains "$pf" 'H17 readiness' "reports H17 readiness"
 assert_file_contains "$pf" 'Milestone B readiness' "reports Milestone B readiness"
 assert_file_contains "$pf" 'signing private key' "reports signing private key"
 assert_file_contains "$pf" 'signing identity' "reports signing identity"
 assert_file_contains "$pf" 'certificate enrolled' "reports certificate enrolled"
+
+# Signing FAILs must not fire for unread keys or modules that are not built yet.
+sign_gate="$(awk '/if \[ "\$sb" = "enabled" \]; then/,/^fi$/' "$pf" | head -n 80)"
+if printf '%s' "$sign_gate" | grep -q 'unreadable'; then
+    assert_eq "1" "1" "unreadable key/cert is a distinct preflight state"
+else
+    assert_eq "missing unreadable branch" "present" "unreadable key/cert is a distinct preflight state"
+fi
+if printf '%s' "$sign_gate" | grep -q 'patched modules are not built yet'; then
+    assert_eq "1" "1" "unbuilt patched modules are INFO, not a signed-set FAIL"
+else
+    assert_eq "missing unbuilt info" "present" "unbuilt patched modules are INFO, not a signed-set FAIL"
+fi
+if printf '%s' "$sign_gate" | grep -q 'mokutil --import'; then
+    if printf '%s' "$sign_gate" | awk '/FAIL\)/,/\*\)/' | grep -q 'mokutil --import'; then
+        assert_eq "1" "1" "mokutil --import is only advised after enrollment FAIL"
+    else
+        assert_eq "import advice unscoped" "FAIL-only" "mokutil --import is only advised after enrollment FAIL"
+    fi
+else
+    assert_eq "missing enroll FAIL advice" "present" "enrollment FAIL still advises mokutil --import"
+fi
 
 # --- 5. Lockdown must never cause fallback to disabling Secure Boot ---
 sb_bad=""

@@ -83,7 +83,11 @@ verify_loaded() {
         return 0
     fi
     if [[ "$patched" -eq 1 && "$sb" == "enabled" && "$enrolled" != "PASS" ]]; then
-        echo "  FAIL: patched module loaded but signing certificate is not enrolled"
+        if [[ "$enrolled" == "FAIL" ]]; then
+            echo "  FAIL: patched module loaded but signing certificate is not enrolled"
+        else
+            echo "  FAIL: patched module loaded but MOK enrollment could not be confirmed"
+        fi
         rc=1
     fi
     if [[ "$patched" -eq 0 ]]; then
@@ -148,7 +152,11 @@ verify_dir() {
             rc=1
         fi
         if [[ "$enrolled" != "PASS" ]]; then
-            echo "  FAIL: certificate not enrolled (do not disable Secure Boot; enroll MOK instead)"
+            if [[ "$enrolled" == "FAIL" ]]; then
+                echo "  FAIL: certificate not enrolled (do not disable Secure Boot; enroll MOK instead)"
+            else
+                echo "  FAIL: cannot confirm MOK enrollment (readable cert required; do not import a new MOK unless mokutil --test-key fails as root)"
+            fi
             rc=1
         fi
     else

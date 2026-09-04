@@ -98,6 +98,23 @@ r610_first_readable() {
     return 1
 }
 
+# True if a candidate exists but is not readable, or its parent dir is
+# present and not listable (typical akmods 750 root:akmods as non-root).
+r610_any_candidate_unreadable() {
+    local p d
+    while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        if [ -e "$p" ] && [ ! -r "$p" ]; then
+            return 0
+        fi
+        d="$(dirname -- "$p")"
+        if [ -d "$d" ] && [ ! -r "$d" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 r610_mok_key_path() {
     r610_mok_key_candidates | r610_first_readable
 }
@@ -106,21 +123,29 @@ r610_mok_cert_path() {
     r610_mok_cert_candidates | r610_first_readable
 }
 
-# available | unavailable
+# available | unreadable | unavailable
 r610_mok_key_state() {
     if r610_mok_key_path >/dev/null 2>&1; then
         printf 'available\n'
-    else
-        printf 'unavailable\n'
+        return 0
     fi
+    if r610_mok_key_candidates | r610_any_candidate_unreadable; then
+        printf 'unreadable\n'
+        return 0
+    fi
+    printf 'unavailable\n'
 }
 
 r610_mok_cert_state() {
     if r610_mok_cert_path >/dev/null 2>&1; then
         printf 'available\n'
-    else
-        printf 'unavailable\n'
+        return 0
     fi
+    if r610_mok_cert_candidates | r610_any_candidate_unreadable; then
+        printf 'unreadable\n'
+        return 0
+    fi
+    printf 'unavailable\n'
 }
 
 r610_normalize_fingerprint() {
@@ -150,10 +175,11 @@ r610_mokutil_bin() {
     printf '%s\n' "${MOKUTIL:-mokutil}"
 }
 
-# PASS | FAIL — is this certificate in the enrolled MOK list?
-# Primary: mokutil --test-key "$cert" EXIT STATUS (never parse English).
-# Fallback: SHA1 fingerprint vs --list-enrolled, only if --test-key is absent.
-# Do not decide enrollment by CN/name matching. Never sudo (caller may already be root).
+# PASS | FAIL | UNKNOWN — is this certificate in the enrolled MOK list?
+# PASS/FAIL only after a real probe (mokutil --test-key exit status, or
+# SHA1 vs --list-enrolled when --test-key is absent). UNKNOWN if the cert
+# is missing/unreadable or mokutil cannot be run — never treat that as
+# "not enrolled". Do not decide enrollment by CN/name matching. Never sudo.
 r610_mokutil_supports_test_key() {
     local bin="${1:-$(r610_mokutil_bin)}"
     "$bin" --help 2>&1 | grep -q -- '--test-key'
@@ -166,12 +192,12 @@ r610_cert_enrolled_state() {
         cert="$(r610_mok_cert_path 2>/dev/null || true)"
     fi
     if [ -z "$cert" ] || [ ! -r "$cert" ]; then
-        printf 'FAIL\n'
+        printf 'UNKNOWN\n'
         return 0
     fi
     mokutil_bin="$(r610_mokutil_bin)"
     if ! command -v "$mokutil_bin" >/dev/null 2>&1 && [ ! -x "$mokutil_bin" ]; then
-        printf 'FAIL\n'
+        printf 'UNKNOWN\n'
         return 0
     fi
     if r610_mokutil_supports_test_key "$mokutil_bin"; then
@@ -184,7 +210,7 @@ r610_cert_enrolled_state() {
     fi
     want="$(r610_cert_sha1 "$cert" 2>/dev/null || true)"
     if [ -z "$want" ]; then
-        printf 'FAIL\n'
+        printf 'UNKNOWN\n'
         return 0
     fi
     while IFS= read -r line; do
