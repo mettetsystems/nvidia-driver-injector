@@ -42,7 +42,12 @@
 #   --no-act         Print every action without making changes.
 #   --force-coexist  Skip the aorus-egpu conflict check (use with care).
 #   --skip-cmdline   Don't touch kernel cmdline (you'll manage it yourself).
+#   --force-cmdline  Write the NUC-era apply.sh cmdline even on Fedora 44 +
+#                    Linux 7.1. Default on that platform is to refuse, because
+#                    the known-good host uses iommu=pt not iommu=off.
 #   --skip-icd       Don't touch Vulkan/EGL/OpenCL ICD files.
+#   --force-icd      Disable NVIDIA ICDs even when an internal NVIDIA GPU is
+#                    present (breaks RTX 2070 display). Default is skip.
 #   --skip-k3s       Don't touch k3s containerd config or RuntimeClass.
 #                    Use this for docker-compose-only deployments, or when
 #                    you manage k3s integration via your own config tool.
@@ -59,7 +64,9 @@ HOST_FILES="${REPO_ROOT}/scripts/host-files"
 NO_ACT=0
 FORCE_COEXIST=0
 SKIP_CMDLINE=0
+FORCE_CMDLINE=0
 SKIP_ICD=0
+FORCE_ICD=0
 SKIP_K3S=0
 
 for arg in "$@"; do
@@ -67,7 +74,9 @@ for arg in "$@"; do
         --no-act)        NO_ACT=1 ;;
         --force-coexist) FORCE_COEXIST=1 ;;
         --skip-cmdline)  SKIP_CMDLINE=1 ;;
+        --force-cmdline) FORCE_CMDLINE=1 ;;
         --skip-icd)      SKIP_ICD=1 ;;
+        --force-icd)     FORCE_ICD=1 ;;
         --skip-k3s)      SKIP_K3S=1 ;;
         -h|--help)
             sed -n '/^# apply\.sh/,/^set -euo/p' "$0" | sed 's/^# \?//' | head -n -1
@@ -94,6 +103,32 @@ act() {
         eval "$*"
     fi
 }
+
+# shellcheck source=../tools/lib/platform.sh
+source "${REPO_ROOT}/tools/lib/platform.sh"
+
+# Fedora 44 + Linux 7.1 reference host: the NUC-era REQUIRED_ARGS below
+# (iommu=off) would regress the known-good iommu=pt cmdline. Refuse unless
+# the operator passes --force-cmdline or already asked for --skip-cmdline.
+if platform_is_fedora44 && platform_kernel_supported "$(uname -r)"; then
+    if [[ "$SKIP_CMDLINE" -eq 0 && "$FORCE_CMDLINE" -eq 0 ]]; then
+        yellow "  Fedora 44 + Linux 7.1: not writing NUC-era cmdline (iommu=off)."
+        yellow "  Known-good on this platform is iommu=pt + hpbussize=0x20 + pcie_aspm=off."
+        yellow "  See docs/platforms/fedora44-linux71-aorus5090.md"
+        yellow "  Implicit --skip-cmdline. Pass --force-cmdline to override (will regress)."
+        SKIP_CMDLINE=1
+    elif [[ "$FORCE_CMDLINE" -eq 1 ]]; then
+        yellow "  --force-cmdline: writing NUC-era iommu=off args on Fedora 44 + 7.1"
+    fi
+fi
+
+# Dual GPU (internal NVIDIA display + GB202 eGPU): global ICD disable
+# would break the display GPU. Skip unless --force-icd.
+if platform_has_non_gb202_nvidia && [[ "$SKIP_ICD" -eq 0 && "$FORCE_ICD" -eq 0 ]]; then
+    yellow "  Internal NVIDIA GPU present; skipping global ICD disable (would break display)."
+    yellow "  Implicit --skip-icd. Pass --force-icd to disable NVIDIA ICDs anyway."
+    SKIP_ICD=1
+fi
 
 # ===========================================================================
 # Step 0: conflict check

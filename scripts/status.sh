@@ -72,12 +72,17 @@ nvsmi_available() {
     if docker exec nvidia-driver-injector sh -c 'command -v nvidia-smi' >/dev/null 2>&1; then
         NVSMI_MODE="container"; return 0
     fi
+    if command -v podman >/dev/null 2>&1 && \
+       podman exec nvidia-driver-injector sh -c 'command -v nvidia-smi' >/dev/null 2>&1; then
+        NVSMI_MODE="podman"; return 0
+    fi
     return 1
 }
 nvsmi() {
     case "$NVSMI_MODE" in
         host)      timeout 20 nvidia-smi "$@" ;;
         container) timeout 20 docker exec nvidia-driver-injector nvidia-smi "$@" ;;
+        podman)    timeout 20 podman exec nvidia-driver-injector nvidia-smi "$@" ;;
         *)         return 1 ;;
     esac
 }
@@ -103,12 +108,43 @@ fi
 # ============================================================================
 section "1. Boot arguments (/proc/cmdline)"
 # ============================================================================
-check_arg_in_cmdline 'iommu=off'
-check_arg_in_cmdline 'intel_iommu=off'
+# Two supported profiles. Do not fail a known-good Fedora 44 + 7.1 host
+# (iommu=pt) just because the original NUC bring-up used iommu=off.
+cmdline_profile=""
+if grep -qE '(^| )iommu=pt( |$)' /proc/cmdline; then
+    cmdline_profile="f44-linux71"
+elif grep -qE '(^| )iommu=off( |$)' /proc/cmdline; then
+    cmdline_profile="nuc-tb4"
+fi
+
 check_arg_in_cmdline 'thunderbolt.host_reset=false'
-check_arg_in_cmdline 'pcie_aspm.policy=performance'
-check_arg_in_cmdline 'thunderbolt.clx=0'
 check_arg_in_cmdline 'pcie_port_pm=off'
+
+if [[ "$cmdline_profile" == "f44-linux71" ]]; then
+    ok "cmdline profile: Fedora 44 / Linux 7.1 (iommu=pt passthrough)"
+    check_arg_in_cmdline 'iommu=pt'
+    check_arg_in_cmdline 'pcie_aspm=off'
+    check_arg_in_cmdline 'pcie_ports=native'
+    if grep -qE '(^| )hpbussize=' /proc/cmdline; then
+        ok "cmdline: hpbussize"
+    else
+        warn "cmdline missing: hpbussize (reference uses hpbussize=0x20)"
+    fi
+    if grep -qE '(^| )pci=.*realloc' /proc/cmdline || grep -qE '(^| )pci=realloc' /proc/cmdline; then
+        ok "cmdline: pci=realloc"
+    else
+        warn "cmdline missing: pci=realloc"
+    fi
+elif [[ "$cmdline_profile" == "nuc-tb4" ]]; then
+    ok "cmdline profile: NUC / TB4 (iommu=off)"
+    check_arg_in_cmdline 'iommu=off'
+    check_arg_in_cmdline 'intel_iommu=off'
+    check_arg_in_cmdline 'pcie_aspm.policy=performance'
+    check_arg_in_cmdline 'thunderbolt.clx=0'
+else
+    fail_ "cmdline missing iommu=pt or iommu=off"
+fi
+
 # resource_alignment can be standalone OR embedded in a compound pci= arg
 if grep -qE 'resource_alignment=35@[0-9a-f]+:[0-9a-f]+:[0-9a-f]+\.[0-9a-f]+' /proc/cmdline; then
     ok "cmdline: pci=resource_alignment (BAR1 sizing)"
@@ -116,11 +152,19 @@ else
     fail_ "cmdline missing: pci=resource_alignment — BAR1 will not size to 32 GiB"
 fi
 
-# IOMMU runtime check (Lever T)
-if [[ -d /sys/class/iommu/dmar0 ]]; then
-    fail_ "/sys/class/iommu/dmar0 present (cmdline iommu=off didn't take effect; reboot needed)"
-else
-    ok "IOMMU disabled (no /sys/class/iommu/dmar0)"
+# IOMMU runtime: dmar0 is expected under iommu=pt and forbidden under iommu=off.
+if [[ "$cmdline_profile" == "f44-linux71" ]]; then
+    if [[ -d /sys/class/iommu/dmar0 ]]; then
+        ok "IOMMU passthrough (dmar0 present with iommu=pt)"
+    else
+        warn "/sys/class/iommu/dmar0 missing under iommu=pt"
+    fi
+elif [[ "$cmdline_profile" == "nuc-tb4" ]]; then
+    if [[ -d /sys/class/iommu/dmar0 ]]; then
+        fail_ "/sys/class/iommu/dmar0 present (cmdline iommu=off didn't take effect; reboot needed)"
+    else
+        ok "IOMMU disabled (no /sys/class/iommu/dmar0)"
+    fi
 fi
 
 # Thunderbolt host_reset runtime
