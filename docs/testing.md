@@ -76,8 +76,8 @@ if any file does. Typical pass output ends with three `N run, 0 failed`
 lines.
 
 On `r610-linux-7.1` additional files cover NVIDIA version plumbing,
-Fedora 44 / GB202 mocks, the production 19-patch manifest, and dry-run
-install/remove wrappers. Still no real GPU required.
+Fedora 44 / GB202 mocks, the production 20-patch manifest, H17 lockdown,
+Secure Boot signing, and dry-run install/remove wrappers. Still no real GPU required.
 
 The patchset compile gate is a separate, heavier tool:
 
@@ -107,6 +107,7 @@ Do not run Stage 4B without reading [`r610-test-plan.md`](r610-test-plan.md).
 | `tests/test-multigpu-layer1.sh` | Dual-GPU Layer-1: no eGPU-only globals in base conf, overlay gated, 2070 vs 5090 dry-run report. |
 | `tests/test-production-manifest.sh` | 20-row apply order, patch files, R610 literals, no RC-watchdog patch. |
 | `tests/test-h17-lockdown.sh` | H17 write-failure propagation, lockdown parser, GB202 bridge discovery, no 2070 writes. |
+| `tests/test-r610-signing.sh` | Secure Boot MOK gate: missing key/cert, unenrolled, unsigned/partial/valid sets; no SB-off advice. |
 | `tests/test-r610-scripts.sh` | install/remove dry-run; Stage 4B scripts refuse without a freeze flag. |
 | `tools/validate-patchset.sh` | End-to-end: clean checkout → compose → apply → `make modules`. |
 

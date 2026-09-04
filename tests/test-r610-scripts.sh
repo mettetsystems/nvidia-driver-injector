@@ -34,4 +34,8 @@ assert_exit 78 "07-soak refuses" \
 assert_file_contains "$root/tools/validate-patchset.sh" '--nvidia-tag' \
     "validate-patchset accepts --nvidia-tag"
 
+assert_exit 0 "sign-r610 --help" bash "$root/scripts/sign-r610-modules.sh" --help
+assert_exit 0 "verify-r610 --help" bash "$root/scripts/verify-r610-signatures.sh" --help
+assert_exit 0 "export-r610 --help" bash "$root/scripts/export-r610-modules.sh" --help
+
 finish_tests

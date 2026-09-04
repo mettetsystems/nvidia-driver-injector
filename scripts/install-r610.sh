@@ -14,6 +14,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$REPO_ROOT/tools/lib/platform.sh"
 # shellcheck source=../tools/lib/nvidia-version.sh
 . "$REPO_ROOT/tools/lib/nvidia-version.sh"
+# shellcheck source=../tools/lib/module-sign.sh
+. "$REPO_ROOT/tools/lib/module-sign.sh"
 
 DRY_RUN=1
 APPLY=0
@@ -76,9 +78,13 @@ if [[ "$LOAD_MODULE" -eq 1 ]]; then
     echo "===== LIVE KERNEL GATE ====="
     echo "1. command:     (NOT EXECUTED) modprobe nvidia  # or injector entrypoint"
     echo "2. effect:      replace/load nvidia.ko $composed into the running kernel"
-    echo "3. rollback:    rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia ; restore stock 610.57.04"
+    echo "3. rollback:    rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia ; restore stock 610.57.04 from extra/nvidia/"
     echo "4. risk:        host freeze, display loss on RTX 2070, unbootable if firmware missing"
     echo "5. verify:      modinfo nvidia ; nvidia-smi ; BAR1 32 GiB"
+    echo
+    echo "Secure Boot signing gate (also not executed):"
+    echo "  scripts/verify-r610-signatures.sh must PASS before any load"
+    echo "  do not disable Secure Boot; sign with scripts/sign-r610-modules.sh"
     echo
     if [[ "$ACCEPT_KERNEL_RISK" -ne 1 ]]; then
         echo "refusing: pass --i-accept-host-kernel-risk as well. Still will not execute the load."

@@ -129,6 +129,23 @@ applies the cap at GB202 probe. Until that module is loaded,
 `status-r610.sh` must report `H17=WRITE_BLOCKED` — not a false PASS from
 systemd `RemainAfterExit`.
 
+## Secure Boot / module signing
+
+Patched `610.57.04-apnex.1` modules must be signed on the **host** with
+an enrolled MOK (typically the Fedora akmods key that already signs
+stock `610.57.04`). The injector container must not receive the private
+key. Workflow:
+
+```
+scripts/export-r610-modules.sh --from <kernel-open>
+sudo scripts/sign-r610-modules.sh
+scripts/verify-r610-signatures.sh
+```
+
+Preflight reports key/cert availability, enrollment, and Milestone B
+readiness. Load is refused while that gate is FAIL. Stock
+`extra/nvidia/` remains the rollback path.
+
 ## Podman (preferred on this workstation)
 
 Preserve Docker Compose and k3s. For local image builds:

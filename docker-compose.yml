@@ -2,7 +2,10 @@
 #
 # Usage:
 #   docker compose build
-#   docker compose up    # builds + loads nvidia.ko on the host
+#   docker compose up    # under Secure Boot: builds then refuses unsigned load
+#   docker compose run --rm driver-injector export-modules  # build+stage only
+#   # then on the host: scripts/sign-r610-modules.sh && verify-r610-signatures.sh
+# Do NOT bind-mount MOK private keys into this container.
 #   docker compose logs -f
 #
 # When done:
@@ -38,6 +41,8 @@ services:
     volumes:
       # Host kernel build dir — needed for the build step
       - /lib/modules:/lib/modules:rw
+      # Do not mount MOK private keys here. Signing is host-side
+      # (scripts/sign-r610-modules.sh).
       - /usr/src:/usr/src:ro
       # Host's PCI sysfs — needed for PCI gate + BAR1 verify
       - /sys:/sys:rw

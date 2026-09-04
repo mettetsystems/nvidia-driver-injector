@@ -8,6 +8,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$REPO_ROOT/tools/lib/nvidia-version.sh"
 # shellcheck source=../tools/lib/platform.sh
 . "$REPO_ROOT/tools/lib/platform.sh"
+# shellcheck source=../tools/lib/module-sign.sh
+. "$REPO_ROOT/tools/lib/module-sign.sh"
 
 nvidia_version_load "$REPO_ROOT"
 composed="$(nvidia_composed_module_version "$REPO_ROOT")"
@@ -33,8 +35,23 @@ echo "  lockdown=$(platform_lockdown_mode)"
 echo "  H17=$(platform_h17_state)"
 echo "  compute-only plan:"
 platform_compute_only_plan | sed 's/^/    /'
+echo "  Secure Boot=$(platform_secure_boot_state)"
+echo "  signing key=$(r610_mok_key_state)"
+echo "  signing cert=$(r610_mok_cert_state)"
+echo "  certificate enrolled=$(r610_cert_enrolled_state)"
 if grep -E '^nvidia ' /proc/modules >/dev/null 2>&1; then
     echo "  loaded nvidia version=$(modinfo -F version nvidia 2>/dev/null || echo unknown)"
+    echo "  loaded module signatures:"
+    for short in nvidia nvidia_modeset nvidia_drm nvidia_uvm nvidia_peermem; do
+        ver="$(r610_loaded_module_version_of "$short" 2>/dev/null || true)"
+        [ -n "$ver" ] || continue
+        signer="$(r610_loaded_module_signer "$short" 2>/dev/null || true)"
+        if [ -z "$signer" ]; then
+            echo "    $short version=$ver UNSIGNED"
+        else
+            echo "    $short version=$ver signer=$signer"
+        fi
+    done
 else
     echo "  loaded nvidia version=(not loaded)"
 fi

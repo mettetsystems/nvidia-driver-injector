@@ -9,6 +9,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../tools/lib/platform.sh
 . "$REPO_ROOT/tools/lib/platform.sh"
 . "$REPO_ROOT/tools/lib/manifest.sh"
+# shellcheck source=../tools/lib/module-sign.sh
+. "$REPO_ROOT/tools/lib/module-sign.sh"
 
 ok=0
 warn=0
@@ -199,7 +201,58 @@ printf '  %-24s %s\n' "userspace H17" "$us_h17"
 printf '  %-24s %s\n' "A13 kernel H17" "$a13_status"
 printf '  %-24s %s\n' "loaded module" "$loaded"
 printf '  %-24s %s\n' "live H17" "$h17_display"
-printf '  %-24s %s\n' "readiness" "$readiness"
+printf '  %-24s %s\n' "H17 readiness" "$readiness"
+
+sign_key="$(r610_mok_key_state)"
+sign_cert="$(r610_mok_cert_state)"
+sign_enrolled="$(r610_cert_enrolled_state)"
+unsigned_dir="$(r610_staging_unsigned)"
+signed_dir="$(r610_staging_signed)"
+if [ "$(r610_modules_built_state "$signed_dir")" = "yes" ]; then
+    sign_built="yes"
+    sign_modules="$signed_dir"
+elif [ "$(r610_modules_built_state "$unsigned_dir")" = "yes" ]; then
+    sign_built="yes"
+    sign_modules="$unsigned_dir"
+else
+    sign_built="no"
+    sign_modules="$signed_dir"
+fi
+if [ "$sign_built" = "yes" ]; then
+    sign_signed="$(r610_modules_signed_state "$sign_modules" "$patched")"
+else
+    sign_signed="PENDING"
+fi
+mb_ready="$(r610_milestone_b_sign_readiness "$sb" "$sign_key" "$sign_cert" "$sign_enrolled" "$sign_built" "$sign_signed")"
+
+echo
+echo "  --- Secure Boot signing / Milestone B ---"
+printf '  %-24s %s\n' "Secure Boot" "$sb"
+printf '  %-24s %s\n' "kernel lockdown" "$h17_ld"
+printf '  %-24s %s\n' "signing private key" "$sign_key"
+printf '  %-24s %s\n' "signing certificate" "$sign_cert"
+printf '  %-24s %s\n' "certificate enrolled" "$sign_enrolled"
+printf '  %-24s %s\n' "patched modules built" "$sign_built"
+printf '  %-24s %s\n' "patched modules signed" "$sign_signed"
+printf '  %-24s %s\n' "Milestone B readiness" "$mb_ready"
+
+if [ "$sb" = "enabled" ]; then
+    if [ "$sign_key" != "available" ]; then
+        fail "signing private key unavailable under Secure Boot (akmods/DKMS/R610_MOK_KEY); do not disable Secure Boot"
+    fi
+    if [ "$sign_cert" != "available" ]; then
+        fail "signing certificate unavailable under Secure Boot; do not disable Secure Boot"
+    fi
+    if [ "$sign_enrolled" != "PASS" ]; then
+        fail "signing certificate is not enrolled in MOK; enroll it (mokutil --import), do not disable Secure Boot"
+    fi
+    if [ "$sign_signed" != "PASS" ]; then
+        fail "patched modules are not a fully signed set (H17 A13 requires signed nvidia.ko under Secure Boot)"
+    fi
+fi
+if [ "$mb_ready" != "PASS" ] && [ "$sb" = "enabled" ]; then
+    info "build-only/sign-only: scripts/export-r610-modules.sh then scripts/sign-r610-modules.sh"
+fi
 
 fw="/lib/firmware/nvidia/${NVIDIA_OPEN_TAG}"
 if [ -s "$fw/gsp_ga10x.bin" ]; then

@@ -13,7 +13,9 @@ kernel entry, unload the live NVIDIA module, or `modprobe` a freshly built
 | Podman `make modules` with headers bind-mounted | yes (`modinfo` file-only) |
 | `scripts/preflight-r610.sh` | yes (read-only) |
 | `scripts/status-r610.sh` | yes (read-only) |
-| `scripts/install-r610.sh` (default) | yes (dry-run) |
+| `scripts/export-r610-modules.sh` | yes (copies .ko only) |
+| `scripts/sign-r610-modules.sh --dry-run` | yes |
+| `scripts/verify-r610-signatures.sh` | yes (read-only) |
 | `scripts/remove-r610.sh` (default) | yes (dry-run) |
 | `diag/r610/01`–`04` | only after a human has loaded a driver; still no module swap |
 | `diag/r610/05`–`07` | **no** unless `I_ACCEPT_HOST_FREEZE_RISK=1` |
@@ -22,6 +24,9 @@ kernel entry, unload the live NVIDIA module, or `modprobe` a freshly built
 
 ```
 scripts/preflight-r610.sh     # read-only checks
+scripts/export-r610-modules.sh # copy patched .ko to unsigned staging
+scripts/sign-r610-modules.sh  # host MOK sign (no load)
+scripts/verify-r610-signatures.sh
 scripts/install-r610.sh       # default dry-run; never loads modules
 scripts/remove-r610.sh        # default dry-run; never unloads modules
 scripts/status-r610.sh        # r610-specific read-only view + status.sh

@@ -11,7 +11,7 @@ Scripts: [`diag/r610/`](../diag/r610/). Unit tests: `bash tests/run.sh`
 | Milestone | Meaning | Status |
 |---|---|---|
 | **A** — source rebase | stock + patched `make modules` on 7.1.10; repo tests pass | **PASS** (compile + unit tests; see [`r610-build-baseline.md`](r610-build-baseline.md)) |
-| **B** — safe module load | patched `nvidia.ko` loads; 2070 display lives; 5090 enumerates; BAR1 32 GiB; `nvidia-smi` | **not started** |
+| **B** — safe module load | patched `nvidia.ko` loads; 2070 display lives; 5090 enumerates; BAR1 32 GiB; `nvidia-smi` | **blocked on host MOK signing** (see `scripts/sign-r610-modules.sh`) |
 | **C** — CUDA regression | Stages 1–4B without 719 / GPFIFO assert / freeze | **not started** |
 | **D** — compute soak | modest kernel + repeated ctx + 5/30 min | **not started** |
 
@@ -49,7 +49,8 @@ Do not jump to vLLM or a 30 GiB model.
   `setpci` LnkCtl2 writes are **WRITE_BLOCKED** (`0x0041` stays, not `0x0063`).
   Production cap is in-driver A13. Do not disable Secure Boot. Tests:
   `tests/test-h17-lockdown.sh`. `status-r610.sh` prints `H17=WRITE_BLOCKED`
-  until patched `nvidia.ko` applies the cap.
+  until patched `nvidia.ko` applies the cap. Milestone B also requires
+  host-side MOK signing (`tests/test-r610-signing.sh`).
 
 ## Kernel cmdline
 

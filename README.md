@@ -186,10 +186,32 @@ If you forked onto an older base, bump it.
 The container is missing `libelf1t64` / `libssl3t64` (used by the host kernel's prebuilt `objtool`).\
 The upstream image installs both; re-add them if you stripped them in a fork.
 
-### `insmod: ... Operation not permitted`
+### `insmod: ... Operation not permitted` / `Required key not available`
 
-Secure Boot is rejecting the unsigned, container-built module.\
-Disable Secure Boot, or sign post-build with a MOK key (the injector's build path does not sign — open follow-up).
+Secure Boot is enabled and the patched modules are unsigned or not signed
+with an enrolled MOK. **Do not disable Secure Boot** on the Fedora 44 /
+Linux 7.1 production path.
+
+The injector container builds unsigned `.ko` files and exports them to
+`/lib/modules/$(uname -r)/nvidia-driver-injector/unsigned/`. Sign them
+on the host (the private key never enters the container):
+
+```bash
+# After a patched build (container export-modules, or a host kernel-open tree):
+sudo ./scripts/export-r610-modules.sh --from /path/to/kernel-open
+sudo ./scripts/sign-r610-modules.sh --from /lib/modules/$(uname -r)/nvidia-driver-injector/unsigned
+sudo ./scripts/verify-r610-signatures.sh
+```
+
+`scripts/preflight-r610.sh` reports key/cert availability, MOK enrollment,
+and Milestone B readiness. Load is refused until verification PASSes.
+Stock signed `610.57.04` under `extra/nvidia/` remains the rollback path.
+
+If no MOK key is readable, run the sign script as root (Fedora akmods
+keys live under `/etc/pki/akmods/` and are enrolled for the stock driver),
+or set `R610_MOK_KEY` / `R610_MOK_CERT` to an already-enrolled pair.
+Enrolling a **new** certificate requires `mokutil --import` and a reboot
+through MOK Manager — this repo does not do that automatically.
 
 ### Container exits cleanly with `no GPU matching ... found on PCI`
 
@@ -219,6 +241,7 @@ Build inputs:
 | NVIDIA upstream | github.com/NVIDIA/open-gpu-kernel-modules tag from `nvidia-version.env` (`610.57.04` on `r610-linux-7.1`) | Image build (`git clone --depth 1`) |
 | Project patches | `patches/base/` + `patches/addon/` (20 production patches; `patches/legacy/` for provenance) | Image build (gated by `--check` and `make modules`) |
 | Host kernel + headers | `/lib/modules/$(uname -r)/build` | Bind-mount at runtime |
+| MOK private key | host akmods/DKMS (never mounted into the build container) | `scripts/sign-r610-modules.sh` on the host |
 
 Patch drift fails the image build, not the pod start.
 

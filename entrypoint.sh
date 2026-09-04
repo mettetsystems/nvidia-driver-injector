@@ -3,6 +3,11 @@
 # (distro-neutral; uses host's /lib/modules bind-mount).
 #
 # Subcommands:
+#   export-modules — build patched .ko and copy them to host staging
+#     (unsigned). Does not load or sign. Host must run
+#     scripts/sign-r610-modules.sh before load is permitted under
+#     Secure Boot.
+#
 #   load (default) — five-step bring-up:
 #     1. PCI gate (eGPU enumerated?)
 #     2. BAR1 verify (32 GiB?)
@@ -29,6 +34,7 @@
 #     fresh-host reset path: Layer 1 reverse + cmdline revert + reboot).
 #
 # Invocation:
+#   docker compose run --rm driver-injector export-modules  # build+stage, no load
 #   docker compose up -d                                  # load (default)
 #   docker compose run --rm driver-injector uninstall     # graceful unload
 #   docker compose run --rm driver-injector purge         # unload + rm .ko
@@ -39,6 +45,15 @@
 #     /entrypoint.sh uninstall|purge                      # in-cluster
 
 set -euo pipefail
+
+EXPORT_ONLY=0
+INJECTOR_ROOT="${INJECTOR_ROOT:-/src}"
+if [[ -f "$INJECTOR_ROOT/tools/lib/module-sign.sh" ]]; then
+    # shellcheck disable=SC1091
+    . "$INJECTOR_ROOT/tools/lib/platform.sh"
+    # shellcheck disable=SC1091
+    . "$INJECTOR_ROOT/tools/lib/module-sign.sh"
+fi
 
 # --- PC-4: structured exit codes ---
 # CONTRACT: exit code values are STABLE. Never reuse a number across
@@ -60,6 +75,7 @@ readonly EXIT_PERSISTENCE_FAILED=40  # nvidia-smi -pm 1 returned non-zero
 # shellcheck disable=SC2034
 readonly EXIT_DEVICE_MISSING=50      # /dev/nvidia* didn't materialise in time
 readonly EXIT_DKMS_SCRUB_FAILED=60   # PC-7 scrub couldn't remove .ko.xz
+readonly EXIT_MODULE_UNSIGNED=32     # Secure Boot on; patched .ko not signed
 readonly EXIT_UNKNOWN=99             # catch-all for not-yet-enumerated cases
 
 log()  { printf '[nvidia-driver-injector] %s\n' "$*"; }
@@ -379,6 +395,9 @@ cmd_purge() {
 # ============================================================================
 SUBCOMMAND="${1:-load}"
 case "$SUBCOMMAND" in
+    export-modules)
+        EXPORT_ONLY=1
+        ;;
     load|"")
         : # fall through to main bring-up flow below
         ;;
@@ -391,7 +410,7 @@ case "$SUBCOMMAND" in
         exit $?
         ;;
     *)
-        fail "$EXIT_UNKNOWN" "unknown subcommand: '${SUBCOMMAND}' (expected: load | uninstall | purge)"
+        fail "$EXIT_UNKNOWN" "unknown subcommand: '${SUBCOMMAND}' (expected: load | export-modules | uninstall | purge)"
         ;;
 esac
 
@@ -415,6 +434,9 @@ write_state "starting"
 # Step 1: PCI gate
 # ============================================================================
 
+if [[ "${EXPORT_ONLY:-0}" -eq 1 ]]; then
+    log "export-modules: skipping PCI / BAR1 / DKMS scrub (build-only, no load)"
+else
 # Auto-detect EGPU_BDF if not set: walk PCI for vendor:device match.
 if [[ -z "$EGPU_BDF" ]]; then
     for d in /sys/bus/pci/devices/*; do
@@ -512,6 +534,7 @@ if [[ $bar1_size -lt $EXPECTED_BAR1_BYTES ]]; then
        See https://github.com/apnex/aorus-5090-egpu for host-side prerequisites."
 fi
 log "BAR1 verify ✓ — $((bar1_size / 1024 / 1024 / 1024)) GiB"
+fi
 
 # ============================================================================
 # Step 3: Build kernel modules against host kernel
@@ -567,6 +590,19 @@ KO_MODESET="/src/nvidia-open-gpu-kernel-modules/kernel-open/nvidia-modeset.ko"
 KO_DRM="/src/nvidia-open-gpu-kernel-modules/kernel-open/nvidia-drm.ko"
 
 [[ -f "$KO_NVIDIA" ]] || fail "$EXIT_MODPROBE_FAILED" "expected ${KO_NVIDIA} not found after build"
+
+# Stage unsigned copies on the host. Never write into extra/nvidia/
+# (stock 610.57.04 rollback). Private MOK keys stay on the host.
+if type r610_export_modules >/dev/null 2>&1; then
+    unsigned_stage="$(r610_staging_unsigned)"
+    r610_export_modules "$(dirname "$KO_NVIDIA")" "$unsigned_stage"
+    log "exported unsigned modules → ${unsigned_stage}"
+    if [[ "${EXPORT_ONLY:-0}" -eq 1 ]]; then
+        log "export-modules complete — sign on the host with scripts/sign-r610-modules.sh --from ${unsigned_stage}"
+        log "do not disable Secure Boot; stock extra/nvidia/ was not modified"
+        exit 0
+    fi
+fi
 
 # ----------------------------------------------------------------------------
 # Firmware path — re-supply + symlink.
@@ -644,6 +680,25 @@ if [[ -n "$fw_version" ]]; then
     log "firmware gate ✓ — ${fw_version} GSP blobs resolve under ${fw_link}"
 fi
 # ----------------------------------------------------------------------------
+
+# Secure Boot: only load a fully signed, enrolled set. The private MOK
+# never enters this container; the host signs staging/signed/.
+if type r610_sign_gate >/dev/null 2>&1; then
+    sb_now="$(platform_secure_boot_state)"
+    signed_stage="$(r610_staging_signed)"
+    expected_ver="${NVIDIA_OPEN_TAG:-unknown}-apnex.1"
+    if [[ "$sb_now" == "enabled" ]]; then
+        if ! r610_sign_gate "$signed_stage" "$expected_ver"; then
+            fail "$EXIT_MODULE_UNSIGNED" \
+                "Secure Boot enabled; patched modules are unsigned, partial, or untrusted. On the host: scripts/sign-r610-modules.sh --from $(r610_staging_unsigned) && scripts/verify-r610-signatures.sh --dir ${signed_stage}. Do not disable Secure Boot. Stock extra/nvidia/ 610.57.04 remains the rollback path."
+        fi
+        KO_NVIDIA="${signed_stage}/nvidia.ko"
+        KO_UVM="${signed_stage}/nvidia-uvm.ko"
+        KO_MODESET="${signed_stage}/nvidia-modeset.ko"
+        KO_DRM="${signed_stage}/nvidia-drm.ko"
+        log "Secure Boot signing gate ✓ — loading from ${signed_stage}"
+    fi
+fi
 
 # Detect whether the host's modprobe.d is bind-mounted (architecture
 # expects /etc/modprobe.d to be mounted from host, ro).
