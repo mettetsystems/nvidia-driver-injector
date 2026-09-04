@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+r610_require_driver
+bdf="$(r610_discover_bdf)"
+r610_log "STAGE 3 4 KiB VRAM  BDF=$bdf"
+r610_cuda vram-4k --bdf "$bdf"
+r610_dump_kernel
+r610_log "PASS stage 3"

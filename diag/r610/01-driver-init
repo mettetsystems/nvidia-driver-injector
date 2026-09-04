@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+r610_require_driver
+bdf="$(r610_discover_bdf)"
+r610_log "STAGE 0 driver-init  BDF=$bdf  version=$(modinfo -F version nvidia 2>/dev/null || echo unknown)"
+if command -v nvidia-smi >/dev/null 2>&1; then
+    nvidia-smi
+else
+    r610_die "nvidia-smi not on PATH"
+fi
+r610_dump_kernel
+r610_log "PASS stage 0"

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+r610_refuse_stage4b
+r610_require_driver
+bdf="$(r610_discover_bdf)"
+r610_log "STAGE 4B PINNED 256 MiB — host-freeze risk  BDF=$bdf"
+r610_cuda xfer-pinned --bdf "$bdf"
+r610_dump_kernel
+r610_log "PASS stage 4B"

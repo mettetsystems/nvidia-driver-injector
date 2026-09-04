@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(cd "$(dirname "$0")" && pwd)/lib.sh"
+r610_refuse_stage4b
+r610_require_driver
+bdf="$(r610_discover_bdf)"
+seconds="${SOAK_SECONDS:-300}"
+r610_log "STAGE 6-8 soak ${seconds}s repeated ctx  BDF=$bdf"
+r610_cuda soak --bdf "$bdf" --seconds "$seconds" --cycles "${SOAK_CYCLES:-0}"
+r610_dump_kernel
+r610_log "PASS soak"
