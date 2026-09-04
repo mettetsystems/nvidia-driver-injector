@@ -269,22 +269,24 @@ platform_h17_state() {
 
 # Secure Boot state: enabled | disabled | unknown
 # Optional path argument, or SECURE_BOOT_FILE. A text fixture may contain
-# those words. Otherwise the EFI SecureBoot variable (byte 4) is read.
+# those words. EFI variables are binary (NUL in the attribute dword) —
+# never slurp them through command substitution.
 platform_secure_boot_state() {
     local f="${1:-${SECURE_BOOT_FILE:-}}"
-    local raw v
+    local token v
     if [ -z "$f" ]; then
         f="/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c"
     fi
     [ -r "$f" ] || { printf 'unknown\n'; return 0; }
-    raw="$(tr -d '\n' < "$f" | tr -d ' \t')"
-    case "$raw" in
+    token="$(LC_ALL=C grep -a -m1 -xE 'enabled|disabled|unknown' "$f" 2>/dev/null || true)"
+    case "$token" in
         enabled|disabled|unknown)
-            printf '%s\n' "$raw"
+            printf '%s\n' "$token"
             return 0
             ;;
     esac
-    v="$(od -An -t u1 -N 5 "$f" 2>/dev/null | awk '{print $5}')"
+    # EFI: UINT32 attributes at offset 0, UINT8 SecureBoot (0/1) at offset 4.
+    v="$(od -An -t u1 -j 4 -N 1 "$f" 2>/dev/null | awk '{print $1}')"
     case "$v" in
         1) printf 'enabled\n' ;;
         0) printf 'disabled\n' ;;

@@ -63,6 +63,11 @@ r610_mok_key_candidates() {
         /etc/pki/akmods/private/private_key.der \
         /var/lib/dkms/mok.key \
         /var/lib/shim-signed/mok/MOK.priv
+    local g
+    for g in /etc/pki/akmods/private/*.priv /etc/pki/akmods/private/*.der; do
+        [ -e "$g" ] || continue
+        printf '%s\n' "$g"
+    done
 }
 
 r610_mok_cert_candidates() {
@@ -74,6 +79,11 @@ r610_mok_cert_candidates() {
         /etc/pki/akmods/certs/public_key.der \
         /var/lib/dkms/mok.pub \
         /var/lib/shim-signed/mok/MOK.der
+    local g
+    for g in /etc/pki/akmods/certs/*.der /etc/pki/akmods/certs/*.pem; do
+        [ -e "$g" ] || continue
+        printf '%s\n' "$g"
+    done
 }
 
 r610_first_readable() {
@@ -140,7 +150,15 @@ r610_mokutil_bin() {
     printf '%s\n' "${MOKUTIL:-mokutil}"
 }
 
-# PASS | FAIL — enrolled MOK list contains this certificate's SHA1.
+# PASS | FAIL — is this certificate in the enrolled MOK list?
+# Primary: mokutil --test-key "$cert" EXIT STATUS (never parse English).
+# Fallback: SHA1 fingerprint vs --list-enrolled, only if --test-key is absent.
+# Do not decide enrollment by CN/name matching. Never sudo (caller may already be root).
+r610_mokutil_supports_test_key() {
+    local bin="${1:-$(r610_mokutil_bin)}"
+    "$bin" --help 2>&1 | grep -q -- '--test-key'
+}
+
 r610_cert_enrolled_state() {
     local cert="${1:-}"
     local mokutil_bin want got line
@@ -151,13 +169,21 @@ r610_cert_enrolled_state() {
         printf 'FAIL\n'
         return 0
     fi
-    want="$(r610_cert_sha1 "$cert" 2>/dev/null || true)"
-    if [ -z "$want" ]; then
+    mokutil_bin="$(r610_mokutil_bin)"
+    if ! command -v "$mokutil_bin" >/dev/null 2>&1 && [ ! -x "$mokutil_bin" ]; then
         printf 'FAIL\n'
         return 0
     fi
-    mokutil_bin="$(r610_mokutil_bin)"
-    if ! command -v "$mokutil_bin" >/dev/null 2>&1 && [ ! -x "$mokutil_bin" ]; then
+    if r610_mokutil_supports_test_key "$mokutil_bin"; then
+        if "$mokutil_bin" --test-key "$cert" >/dev/null 2>&1; then
+            printf 'PASS\n'
+        else
+            printf 'FAIL\n'
+        fi
+        return 0
+    fi
+    want="$(r610_cert_sha1 "$cert" 2>/dev/null || true)"
+    if [ -z "$want" ]; then
         printf 'FAIL\n'
         return 0
     fi
@@ -173,6 +199,31 @@ r610_cert_enrolled_state() {
         esac
     done < <("$mokutil_bin" --list-enrolled 2>/dev/null || true)
     printf 'FAIL\n'
+}
+
+# CN from the signing certificate (PEM or DER). unknown if unreadable.
+r610_cert_identity() {
+    local cert="${1:-}"
+    local subj="" cn=""
+    local openssl_bin="${OPENSSL:-openssl}"
+    if [ -z "$cert" ]; then
+        cert="$(r610_mok_cert_path 2>/dev/null || true)"
+    fi
+    if [ -z "$cert" ] || [ ! -r "$cert" ]; then
+        printf 'unknown\n'
+        return 0
+    fi
+    subj="$("$openssl_bin" x509 -noout -subject -nameopt RFC2253,-esc_msb -in "$cert" 2>/dev/null || true)"
+    if [ -z "$subj" ]; then
+        subj="$("$openssl_bin" x509 -inform DER -noout -subject -nameopt RFC2253,-esc_msb -in "$cert" 2>/dev/null || true)"
+    fi
+    cn="${subj#*CN=}"
+    cn="${cn%%,*}"
+    if [ -z "$cn" ] || [ "$cn" = "$subj" ]; then
+        printf 'unknown\n'
+        return 0
+    fi
+    printf '%s\n' "$cn"
 }
 
 r610_modinfo_bin() {

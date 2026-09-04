@@ -87,6 +87,7 @@ assert_file_contains "$pf" 'live H17' "reports live H17"
 assert_file_contains "$pf" 'H17 readiness' "reports H17 readiness"
 assert_file_contains "$pf" 'Milestone B readiness' "reports Milestone B readiness"
 assert_file_contains "$pf" 'signing private key' "reports signing private key"
+assert_file_contains "$pf" 'signing identity' "reports signing identity"
 assert_file_contains "$pf" 'certificate enrolled' "reports certificate enrolled"
 
 # --- 5. Lockdown must never cause fallback to disabling Secure Boot ---

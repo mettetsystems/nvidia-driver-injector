@@ -79,6 +79,18 @@ assert_eq "$(platform_h17_deployment_state integrity WRITE_BLOCKED 610.57.04-apn
 
 printf 'enabled\n' > "$os/sb"
 assert_eq "$(platform_secure_boot_state "$os/sb")" "enabled" "secure boot fixture enabled"
+# Binary EFI var: attributes + SecureBoot=1. Must not warn about NUL.
+python3 -c "import pathlib; pathlib.Path(r'$os/efi-sb').write_bytes(bytes([0,0,0,0,1]))"
+sb_err="$os/sb.err"
+sb_got="$(platform_secure_boot_state "$os/efi-sb" 2>"$sb_err")"
+assert_eq "$sb_got" "enabled" "binary EFI SecureBoot=1 is enabled"
+if grep -q 'null byte' "$sb_err"; then
+    assert_eq "$(cat "$sb_err")" "" "Secure Boot read must be binary-safe (no NUL warning)"
+else
+    assert_eq "1" "1" "Secure Boot read must be binary-safe (no NUL warning)"
+fi
+python3 -c "import pathlib; pathlib.Path(r'$os/efi-sb0').write_bytes(bytes([0,0,0,0,0]))"
+assert_eq "$(platform_secure_boot_state "$os/efi-sb0")" "disabled" "binary EFI SecureBoot=0 is disabled"
 
 assert_eq "$(platform_cmdline_profile 'BOOT iommu=pt quiet')" "f44-linux71" "iommu=pt profile"
 assert_eq "$(platform_cmdline_profile 'BOOT iommu=off quiet')" "nuc-tb4" "iommu=off profile"

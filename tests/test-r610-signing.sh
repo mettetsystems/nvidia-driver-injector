@@ -47,11 +47,81 @@ printf 'SHA1 Fingerprint: 00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00:11:
 
 cat > "$os/mokutil-pass" <<STUB
 #!/usr/bin/env bash
-cat "${os}/mok-enrolled.txt"
+case "\${1:-}" in
+    --help)
+        echo "Usage: mokutil [options]"
+        echo "  --test-key <file>   Test if the key is enrolled"
+        echo "  --list-enrolled     List enrolled keys"
+        exit 0
+        ;;
+    --test-key)
+        exit 0
+        ;;
+    --list-enrolled)
+        cat "${os}/mok-enrolled.txt"
+        exit 0
+        ;;
+esac
+exit 2
 STUB
 cat > "$os/mokutil-fail" <<STUB
 #!/usr/bin/env bash
-cat "${os}/mok-other.txt"
+case "\${1:-}" in
+    --help)
+        echo "Usage: mokutil [options]"
+        echo "  --test-key <file>   Test if the key is enrolled"
+        echo "  --list-enrolled     List enrolled keys"
+        exit 0
+        ;;
+    --test-key)
+        exit 1
+        ;;
+    --list-enrolled)
+        cat "${os}/mok-other.txt"
+        exit 0
+        ;;
+esac
+exit 2
+STUB
+cat > "$os/mokutil-old" <<STUB
+#!/usr/bin/env bash
+# mokutil without --test-key (fingerprint fallback only)
+case "\${1:-}" in
+    --help)
+        echo "Usage: mokutil [options]"
+        echo "  --list-enrolled     List enrolled keys"
+        exit 0
+        ;;
+    --test-key)
+        echo "mokutil: invalid option --test-key" >&2
+        exit 2
+        ;;
+    --list-enrolled)
+        cat "${os}/mok-enrolled.txt"
+        echo "        Subject: CN=r610-test-mok"
+        exit 0
+        ;;
+esac
+exit 2
+STUB
+cat > "$os/mokutil-old-miss" <<STUB
+#!/usr/bin/env bash
+case "\${1:-}" in
+    --help)
+        echo "Usage: mokutil [options]"
+        echo "  --list-enrolled     List enrolled keys"
+        exit 0
+        ;;
+    --test-key)
+        exit 2
+        ;;
+    --list-enrolled)
+        cat "${os}/mok-other.txt"
+        echo "        Subject: CN=r610-test-mok"
+        exit 0
+        ;;
+esac
+exit 2
 STUB
 cat > "$os/modinfo" <<'STUB'
 #!/usr/bin/env bash
@@ -80,7 +150,7 @@ fi
 echo TestMOK > "${dest}.signer"
 exit 0
 STUB
-chmod +x "$os/mokutil-pass" "$os/mokutil-fail" "$os/modinfo" "$os/sign-file"
+chmod +x "$os/mokutil-pass" "$os/mokutil-fail" "$os/mokutil-old" "$os/mokutil-old-miss" "$os/modinfo" "$os/sign-file"
 
 write_set() {
     local dir="$1"
@@ -129,15 +199,36 @@ assert_exit 1 "sign fails when certificate is missing" \
     env R610_MOK_KEY="$os/key.pem" R610_MOK_CERT="$os/missing.cert" \
         bash "$root/scripts/sign-r610-modules.sh" --from "$os/unsigned" --dest "$os/signed"
 
-# --- unenrolled certificate ---
+# --- unenrolled certificate (mokutil --test-key nonzero) ---
 export R610_MOK_KEY="$os/key.pem" R610_MOK_CERT="$os/cert.pem" MOKUTIL="$os/mokutil-fail"
-assert_eq "$(r610_cert_enrolled_state "$os/cert.pem")" "FAIL" "unenrolled certificate is FAIL"
+assert_eq "$(r610_cert_enrolled_state "$os/cert.pem")" "FAIL" \
+    "mokutil --test-key nonzero -> FAIL"
 write_set "$os/signed-unenrolled"
 sign_set "$os/signed-unenrolled"
 assert_exit 1 "verify fails when certificate is not enrolled under Secure Boot" \
     env SECURE_BOOT_FILE="$os/sb" MOKUTIL="$os/mokutil-fail" \
         MODINFO="$os/modinfo" R610_MOK_CERT="$os/cert.pem" \
         bash "$root/scripts/verify-r610-signatures.sh" --dir "$os/signed-unenrolled"
+
+# --- enrolled via --test-key exit 0 (authoritative, ignore English) ---
+export MOKUTIL="$os/mokutil-pass"
+assert_eq "$(r610_cert_enrolled_state "$os/cert.pem")" "PASS" \
+    "mokutil --test-key exit 0 -> PASS"
+assert_eq "$(r610_cert_identity "$os/cert.pem")" "r610-test-mok" "signing identity is cert CN"
+
+# Explicit R610_MOK_CERT override (not automatic discovery)
+assert_eq "$(R610_MOK_CERT="$os/cert.pem" r610_mok_cert_path)" "$os/cert.pem" \
+    "R610_MOK_CERT overrides automatic discovery"
+
+# Fallback: no --test-key, SHA1 match (CN present in list is not enough)
+export MOKUTIL="$os/mokutil-old"
+assert_eq "$(r610_mokutil_supports_test_key "$os/mokutil-old" && echo yes || echo no)" "no" \
+    "old mokutil has no --test-key"
+assert_eq "$(r610_cert_enrolled_state "$os/cert.pem")" "PASS" \
+    "fallback SHA1 match is PASS when --test-key missing"
+export MOKUTIL="$os/mokutil-old-miss"
+assert_eq "$(r610_cert_enrolled_state "$os/cert.pem")" "FAIL" \
+    "fallback does not treat CN/name match as enrollment"
 
 # --- unsigned module set, Secure Boot enabled ---
 export MOKUTIL="$os/mokutil-pass"
