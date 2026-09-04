@@ -51,6 +51,9 @@ if platform_has_non_gb202_nvidia; then
 fi
 
 echo
+platform_print_layer1_gpu_report
+
+echo
 echo "Would run Layer 1:"
 echo "  sudo $REPO_ROOT/scripts/apply.sh ${apply_flags[*]}"
 

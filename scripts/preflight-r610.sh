@@ -100,6 +100,25 @@ fi
 
 if platform_has_non_gb202_nvidia; then
     ok "internal NVIDIA GPU present — ICD disable must stay skipped"
+    base_conf="$REPO_ROOT/scripts/host-files/etc/modprobe.d/nvidia-driver-injector.conf"
+    if platform_conf_has_egpu_only_globals "$base_conf"; then
+        fail "repo base modprobe.d still has eGPU-only globals (would disable the internal GPU)"
+    else
+        ok "repo base modprobe.d has no eGPU-only globals"
+    fi
+    overlay="$REPO_ROOT/scripts/host-files/etc/modprobe.d/nvidia-driver-injector-compute-only.conf"
+    if [[ -f "$overlay" ]] && platform_conf_has_egpu_only_globals "$overlay"; then
+        ok "compute-only overlay exists (eGPU-only hosts only)"
+    else
+        fail "compute-only overlay missing or empty"
+    fi
+    if [[ -f /etc/modprobe.d/nvidia-driver-injector.conf ]] && \
+       platform_conf_has_egpu_only_globals /etc/modprobe.d/nvidia-driver-injector.conf; then
+        fail "installed /etc/modprobe.d/nvidia-driver-injector.conf has eGPU-only globals"
+    fi
+    if [[ -f /etc/modprobe.d/nvidia-driver-injector-compute-only.conf ]]; then
+        fail "installed compute-only overlay while an internal NVIDIA GPU is present"
+    fi
 else
     warn "no internal NVIDIA GPU seen (ICD disable would be global)"
 fi

@@ -195,7 +195,7 @@ R610 also **drops** `kernel-open/nvidia/nv-pat.c` from `nvidia-sources.Kbuild`. 
 | Layer 1 cmdline | `iommu=off intel_iommu=off thunderbolt.host_reset=false pcie_aspm.policy=performance thunderbolt.clx=0 pcie_port_pm=off pci=resource_alignment=35@<bridge>` | Reference host: `iommu=pt hpbussize=0x20 pcie_aspm=off pcie_ports=native pcie_port_pm=off thunderbolt.host_reset=false pci=realloc,assign-busses,resource_alignment=35@0000:8c:00.0` |
 | BAR1 gate | 32 GiB (`EXPECTED_BAR1_BYTES=34359738368`) | keep; do not regress |
 | eGPU PCI id | `10de:2b85` (GB202) | still GB202; treat BDF as fixture |
-| Dual GPU | ICD disable is **global** | RTX 2070 is the display GPU — compute-only must stay 5090-scoped |
+| Dual GPU | ICD disable + compute-only overlay are **eGPU-only** | RTX 2070 stays the display GPU; A2/A3 gated to `10de:2b85` |
 
 ---
 
@@ -293,15 +293,23 @@ A2 (detection) + A3 (recovery) + C5 (sink). Module param `NVreg_TbEgpuRecoverEna
 
 ## 16. Existing compute-only behavior
 
-| Mechanism | Scope | Dual-GPU risk |
+Layer 1 is split: a dual-GPU-safe **base** conf plus an **overlay** used
+only on hosts with no internal NVIDIA GPU.
+
+| Mechanism | Scope | Dual-GPU (2070 + 5090) |
 |---|---|---|
-| `install nvidia_drm /bin/false` + `options nvidia_drm modeset=0 fbdev=0` | **global** | Protects 2070 from nvidia-drm too — GNOME on 2070 must use i915/amdgpu/simpledrm, not nvidia_drm. Confirm 2070 is not the display GPU via nvidia_drm before tightening |
-| Vulkan/EGL/OpenCL ICD rename in `apply.sh` | **global** | **Will break** a 2070 NVIDIA display path |
+| Base `nvidia-driver-injector.conf` | DeviceFile*, DPM=0, RestrictProfiling, `TbEgpuRecoverEnable=1` | Safe for 2070 graphics (DPM=0 still disables 2070 RTD3) |
+| Overlay blacklist / `install /bin/false` / `nvidia_drm modeset=0` | **eGPU-only hosts** | **Not installed**; `apply.sh` removes a leftover overlay |
+| Vulkan/EGL/OpenCL ICD rename in `apply.sh` | eGPU-only (implicit `--skip-icd` here) | Unchanged — 2070 display path keeps vendor ICDs |
 | udev `80-…-disable-audio.rules` | device `10de:22e8` only | Safe for 2070 |
-| `RmForceExternalGpu=1` | **global** module param | Forces **both** GPUs onto the eGPU PM path — needs review on a 2070+5090 host |
+| `RmForceExternalGpu=1` | **removed** | Not an R610 open-module key; E1/A9 classify TB/USB4 instead |
+| A2 Q-watchdog / A3 recover + AER | PCI `10de:2b85` | 2070 does not get recover state, WPR2 probe, or Q-watchdog |
 | Entrypoint PCI/BAR1 gate | `10de:2b85` only | Correct (5090-only) |
 
-The reference host showed gnome-shell using a few MiB on the 5090. Compute-only is therefore incomplete for this dual-GPU fixture. Do not globally disable ICDs.
+The reference host showed gnome-shell using a few MiB on the 5090.
+Compute-only for the **5090** is HDMI-audio unbind plus not treating the
+eGPU as a desktop KMS target — **not** global `modeset=0`. Do not
+globally disable ICDs, `nvidia_drm`, or module autoload on this fixture.
 
 ---
 

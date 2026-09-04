@@ -55,11 +55,16 @@ assert_eq "$?" "0" "detect internal NVIDIA GPU"
 plan="$(platform_compute_only_plan "$pci")"
 assert_contains "$plan" "icd_disable=skip" "compute-only skips global ICD"
 assert_contains "$plan" "audio_udev_device=10de:22e8" "audio udev stays 5090-scoped"
+assert_contains "$plan" "drm_modeset=unchanged" "dual-GPU leaves nvidia_drm modeset alone"
+assert_contains "$plan" "nvidia_autoload=enabled" "dual-GPU keeps nvidia autoload"
+assert_contains "$plan" "compute_only_overlay=skip" "dual-GPU skips compute-only overlay"
 
 # GB202 only — ICD apply
 rm -rf "$pci/0000:02:00.0"
 plan2="$(platform_compute_only_plan "$pci")"
 assert_contains "$plan2" "icd_disable=apply" "egpu-only host may disable ICDs"
+assert_contains "$plan2" "compute_only_overlay=apply" "egpu-only host gets compute-only overlay"
+assert_contains "$plan2" "drm_modeset=0" "egpu-only host sets nvidia_drm modeset=0"
 
 assert_eq "$(platform_cmdline_profile 'BOOT iommu=pt quiet')" "f44-linux71" "iommu=pt profile"
 assert_eq "$(platform_cmdline_profile 'BOOT iommu=off quiet')" "nuc-tb4" "iommu=off profile"

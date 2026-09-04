@@ -39,10 +39,12 @@ Do not jump to vLLM or a 30 GiB model.
 ## Dual GPU
 
 - RTX 2070 (`0000:02:00.0` on the fixture) stays the display GPU.
-- RTX 5090 / GB202 is compute-only.
+- RTX 5090 / GB202 is compute-only via HDMI-audio unbind and GB202-gated
+  A2/A3 recovery — **not** global `nvidia_drm modeset=0` or ICD disable.
 - Do not globally disable NVIDIA ICDs (`apply.sh` skips them when a
   non-GB202 NVIDIA device is present).
 - Audio udev stays scoped to `10de:22e8`.
+- See `tests/test-multigpu-layer1.sh`.
 
 ## Kernel cmdline
 

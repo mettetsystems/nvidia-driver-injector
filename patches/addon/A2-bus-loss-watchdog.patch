@@ -74,7 +74,7 @@ new file mode 100644
 index 00000000..bd8aa2a5
 --- /dev/null
 +++ b/kernel-open/nvidia/nv-tb-egpu-qwd.c
-@@ -0,0 +1,455 @@
+@@ -0,0 +1,475 @@
 +/*
 + * SPDX-FileCopyrightText: nvidia-driver-injector contributors
 + * SPDX-License-Identifier: MIT
@@ -157,6 +157,18 @@ index 00000000..bd8aa2a5
 +#include <linux/jiffies.h>
 +#include <linux/device.h>
 +#include <linux/sysfs.h>
++#include <linux/pci.h>
++
++/* Scope the heartbeat to GB202 (RTX 5090). One nvidia.ko probes every
++ * NVIDIA GPU; an internal display GPU must not get this kthread. */
++#define TB_EGPU_PCI_VENDOR_NVIDIA 0x10de
++#define TB_EGPU_PCI_DEVICE_GB202  0x2b85
++
++static bool tb_egpu_qwd_is_gb202(const struct pci_dev *pdev)
++{
++    return pdev && pdev->vendor == TB_EGPU_PCI_VENDOR_NVIDIA &&
++           pdev->device == TB_EGPU_PCI_DEVICE_GB202;
++}
 +
 +/* Module parameters */
 +
@@ -450,6 +462,14 @@ index 00000000..bd8aa2a5
 +        NV_DEV_PRINTF(NV_DBG_INFO, nv,
 +            "tb_egpu: qwd disabled at module load "
 +            "(NVreg_TbEgpuQwdEnable=0); kthread not spawned\n");
++        nvl->qwd = NULL;
++        return 0;
++    }
++
++    if (!tb_egpu_qwd_is_gb202(nvl->pci_dev))
++    {
++        NV_DEV_PRINTF(NV_DBG_INFO, nv,
++            "tb_egpu: qwd skipped (not GB202 10de:2b85)\n");
 +        nvl->qwd = NULL;
 +        return 0;
 +    }

@@ -8,8 +8,8 @@
 # (/dev/nvidia0, /dev/nvidiactl). The nvidia_uvm sub-module has no
 # equivalent NVreg_* parameter, so /dev/nvidia-uvm and
 # /dev/nvidia-uvm-tools rely on this udev rule for their group
-# permissions (or fall back to 0666 root:root, which is wide-open
-# but safe given the ICD-disable posture).
+# permissions (or fall back to 0666 root:root). Display sessions must
+# be in group 'gpu' to open /dev/nvidia* under MODE=0660.
 
 KERNEL=="nvidia",            GROUP="gpu", MODE="0660"
 KERNEL=="nvidiactl",         GROUP="gpu", MODE="0660"

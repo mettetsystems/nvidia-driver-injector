@@ -31,10 +31,20 @@ platform_kernel_supported() {
 platform_gb202_device_id() { echo "0x2b85"; }
 platform_nvidia_vendor_id() { echo "0x10de"; }
 
+# Sysfs PCI devices dir. Tests set PLATFORM_PCI_ROOT to a mock tree.
+platform_pci_root() {
+    if [ -n "${1:-}" ]; then
+        printf '%s\n' "$1"
+    else
+        printf '%s\n' "${PLATFORM_PCI_ROOT:-/sys/bus/pci/devices}"
+    fi
+}
+
 # Walk a sysfs pci devices dir (default /sys/bus/pci/devices).
 # Prints BDFs whose vendor/device match GB202. No hardcoded BDF.
 platform_find_gb202_bdfs() {
-    local pci_root="${1:-/sys/bus/pci/devices}"
+    local pci_root
+    pci_root="$(platform_pci_root "${1:-}")"
     local want_v want_d v d bdf
     want_v="$(platform_nvidia_vendor_id)"
     want_d="$(platform_gb202_device_id)"
@@ -75,7 +85,8 @@ platform_upstream_bridge_bdf() {
 
 # Print BDFs of every NVIDIA function (vendor 0x10de), any device id.
 platform_find_nvidia_bdfs() {
-    local pci_root="${1:-/sys/bus/pci/devices}"
+    local pci_root
+    pci_root="$(platform_pci_root "${1:-}")"
     local want_v v bdf
     want_v="$(platform_nvidia_vendor_id)"
     [ -d "$pci_root" ] || return 0
@@ -92,7 +103,8 @@ platform_find_nvidia_bdfs() {
 # True if a non-GB202 NVIDIA device is present (typically an internal
 # display GPU such as RTX 2070). Used to refuse global ICD disable.
 platform_has_non_gb202_nvidia() {
-    local pci_root="${1:-/sys/bus/pci/devices}"
+    local pci_root
+    pci_root="$(platform_pci_root "${1:-}")"
     local want_v want_d v d
     want_v="$(platform_nvidia_vendor_id)"
     want_d="$(platform_gb202_device_id)"
@@ -111,16 +123,66 @@ platform_has_non_gb202_nvidia() {
 # Compute-only plan for this host. Prints key=value lines.
 # audio_udev is always scoped to the 5090 HDMI audio id (10de:22e8).
 # icd_disable is "skip" when an internal NVIDIA GPU is present.
+# drm_modeset/nvidia_autoload stay enabled on dual-GPU; compute-only
+# overlay is only for eGPU-only hosts.
 platform_compute_only_plan() {
-    local pci_root="${1:-/sys/bus/pci/devices}"
+    local pci_root
+    pci_root="$(platform_pci_root "${1:-}")"
     printf 'audio_udev_device=10de:22e8\n'
+    printf 'tb_egpu_recover=enabled\n'
+    printf 'd3cold_protection=enabled\n'
     if platform_has_non_gb202_nvidia "$pci_root"; then
         printf 'icd_disable=skip\n'
         printf 'icd_reason=internal-nvidia-display-gpu\n'
+        printf 'drm_modeset=unchanged\n'
+        printf 'nvidia_autoload=enabled\n'
+        printf 'compute_only_overlay=skip\n'
     else
         printf 'icd_disable=apply\n'
         printf 'icd_reason=egpu-only\n'
+        printf 'drm_modeset=0\n'
+        printf 'nvidia_autoload=blocked\n'
+        printf 'compute_only_overlay=apply\n'
     fi
+}
+
+# True if a modprobe.d snippet uses eGPU-only globals that would break
+# an internal NVIDIA display GPU. Ignores comments and blank lines.
+platform_conf_has_egpu_only_globals() {
+    local f="$1"
+    [ -f "$f" ] || return 1
+    grep -vE '^[[:space:]]*(#|$)' "$f" 2>/dev/null | grep -Eq \
+        -e '^[[:space:]]*blacklist[[:space:]]+nvidia' \
+        -e '^[[:space:]]*install[[:space:]]+nvidia' \
+        -e 'modeset=0' \
+        -e 'RmForceExternalGpu'
+}
+
+# Operator-facing Layer-1 plan. pci_root is mockable for tests.
+platform_print_layer1_gpu_report() {
+    local pci_root
+    pci_root="$(platform_pci_root "${1:-}")"
+    if platform_has_non_gb202_nvidia "$pci_root"; then
+        cat <<'EOF'
+Internal RTX 2070:
+    nvidia                 enabled
+    nvidia_modeset         enabled
+    nvidia_drm             enabled/unchanged
+    graphics ICDs          unchanged
+EOF
+    else
+        cat <<'EOF'
+Internal RTX 2070:
+    (not present — eGPU-only host; compute-only overlay would apply)
+EOF
+    fi
+    cat <<'EOF'
+External RTX 5090:
+    compute-only           enabled
+    HDMI audio             disabled
+    D3cold protection      enabled
+    TbEgpu recovery        enabled
+EOF
 }
 
 # cmdline profile: "f44-linux71" | "nuc-tb4" | "unknown"

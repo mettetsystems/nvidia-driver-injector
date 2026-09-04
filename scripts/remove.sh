@@ -7,7 +7,8 @@
 # What this does:
 #   1. Stop + disable + remove the bridge-link-cap systemd unit.
 #   2. Remove /usr/local/sbin/nvidia-driver-injector-bridge-link-cap.
-#   3. Remove /etc/modprobe.d/nvidia-driver-injector.conf.
+#   3. Remove /etc/modprobe.d/nvidia-driver-injector.conf and the
+#      compute-only overlay if present.
 #   4. Remove /etc/udev/rules.d/79-nvidia-driver-injector.rules.
 #   5. Re-enable Vulkan/EGL/OpenCL ICDs (rename .disabled → original).
 #   6. Delete cluster-side RuntimeClass nvidia + (under --purge) revert
@@ -163,6 +164,13 @@ if [[ -f "$f" ]]; then
     green "  removed ${f}"
 else
     yellow "  ${f} already absent"
+fi
+overlay="/etc/modprobe.d/nvidia-driver-injector-compute-only.conf"
+if [[ -f "$overlay" ]]; then
+    act "rm -f ${overlay}"
+    green "  removed ${overlay}"
+else
+    yellow "  ${overlay} already absent"
 fi
 
 # ===========================================================================

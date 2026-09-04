@@ -32,11 +32,18 @@ scripts/status-r610.sh        # r610-specific read-only view + status.sh
 - `apply.sh --no-act` unless `--apply` (then real Layer 1)
 - always `--skip-cmdline` on Fedora 44 + 7.1 (known-good `iommu=pt`)
 - always `--skip-icd` when an internal NVIDIA GPU is present
+- never installs `nvidia-driver-injector-compute-only.conf` when an
+  internal NVIDIA GPU is present (no blacklist / `modeset=0`)
 
 It **will not** `modprobe`/`insmod`. `--load-module` is rejected unless
 `--i-accept-host-kernel-risk` is also passed, and even then the script
 prints the five-point gate and **exits 78** — it does not execute the
 load. A human must run the load command.
+
+On this dual-GPU workstation, Layer 1 keeps RTX 2070 graphics (nvidia /
+nvidia_modeset / nvidia_drm / ICDs enabled). The 5090 stays compute-only
+via HDMI-audio unbind (`10de:22e8`), D3cold protection, and in-driver
+A2/A3 recovery gated to `10de:2b85`. `RmForceExternalGpu` is not used.
 
 `remove-r610.sh` will not `rmmod` or revert cmdline unless the matching
 danger flags are passed; `--revert-cmdline` still prints the five-point

@@ -19,6 +19,10 @@
 
 set -uo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../tools/lib/platform.sh
+source "${SCRIPT_DIR}/../tools/lib/platform.sh"
+
 # ANSI colours; only emit if stdout is a TTY.
 if [[ -t 1 ]]; then
     C_OK=$'\033[32m'; C_WARN=$'\033[33m'; C_FAIL=$'\033[31m'; C_INFO=$'\033[36m'; C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'
@@ -182,6 +186,19 @@ for f in /etc/modprobe.d/nvidia-driver-injector.conf \
          /usr/local/sbin/nvidia-driver-injector-bridge-link-cap; do
     [[ -e "$f" ]] && ok "present: $f" || fail_ "missing: $f (run: sudo ./scripts/apply.sh)"
 done
+if platform_has_non_gb202_nvidia; then
+    if [[ -f /etc/modprobe.d/nvidia-driver-injector-compute-only.conf ]]; then
+        fail_ "compute-only overlay present with an internal NVIDIA GPU — would block 2070 graphics"
+    else
+        ok "compute-only overlay absent (dual-GPU safe)"
+    fi
+    if [[ -f /etc/modprobe.d/nvidia-driver-injector.conf ]] && \
+       platform_conf_has_egpu_only_globals /etc/modprobe.d/nvidia-driver-injector.conf; then
+        fail_ "installed modprobe.d uses eGPU-only globals (blacklist/modeset=0/RmForceExternalGpu)"
+    elif [[ -f /etc/modprobe.d/nvidia-driver-injector.conf ]]; then
+        ok "installed modprobe.d has no eGPU-only globals"
+    fi
+fi
 
 # ============================================================================
 section "3. Layer 1 — bridge-link-cap systemd unit (Lever H17)"
@@ -291,10 +308,16 @@ if mod_loaded nvidia; then
         warn "nvidia loaded: $ver (NOT patched — stock auto-load occurred)"
     fi
     mod_loaded nvidia_uvm && ok "nvidia_uvm loaded" || warn "nvidia_uvm: not loaded (cuInit will try to load it)"
-    if mod_loaded nvidia_drm; then
-        fail_ "nvidia_drm LOADED (compute-only mode requires unloaded — possible GNOME-freeze risk)"
+    if platform_has_non_gb202_nvidia; then
+        if mod_loaded nvidia_drm; then
+            ok "nvidia_drm loaded (internal NVIDIA display GPU present)"
+        else
+            info "nvidia_drm not loaded (internal NVIDIA GPU present; KMS may be on i915)"
+        fi
+    elif mod_loaded nvidia_drm; then
+        fail_ "nvidia_drm LOADED (eGPU-only compute-only mode requires unloaded — possible GNOME-freeze risk)"
     else
-        ok "nvidia_drm unloaded (compute-only)"
+        ok "nvidia_drm unloaded (eGPU-only compute-only)"
     fi
     if [[ -n "$GPU_BDF" && -e "/sys/bus/pci/devices/$GPU_BDF/driver" ]]; then
         bound=$(basename "$(readlink "/sys/bus/pci/devices/$GPU_BDF/driver")")
@@ -321,7 +344,7 @@ if mod_loaded nvidia; then
     else
         warn "tb_egpu recover: unknown (RecoverEnable=$re)"
     fi
-    info "NVreg_DeviceFile* + RmForceExternalGpu are write-only at load;"
+    info "NVreg_DeviceFile* is write-only at load;"
     info "  see section 7 (perm check) for indirect verification of DeviceFileMode/UID/GID."
 fi
 
@@ -383,22 +406,37 @@ if mod_loaded nvidia; then
 fi
 
 # ============================================================================
-section "9. ICD disable (compute-only posture)"
+section "9. Graphics ICDs (must stay active when an internal NVIDIA GPU is present)"
 # ============================================================================
-for f in /usr/share/vulkan/icd.d/nvidia_icd.x86_64.json \
-         /usr/share/vulkan/implicit_layer.d/nvidia_layers.json \
-         /usr/share/glvnd/egl_vendor.d/10_nvidia.json \
-         /etc/OpenCL/vendors/nvidia.icd; do
-    if [[ -f "${f}.nvidia-driver-injector-disabled" ]]; then
-        ok "disabled: $f"
-    elif [[ -f "${f}.aorus-disabled" ]]; then
-        warn "$f disabled by aorus-egpu (legacy naming; effectively disabled)"
-    elif [[ -f "$f" ]]; then
-        warn "$f present + active (not disabled)"
-    else
-        info "$f not present (vendor may not have shipped this ICD)"
-    fi
-done
+if platform_has_non_gb202_nvidia; then
+    for f in /usr/share/vulkan/icd.d/nvidia_icd.x86_64.json \
+             /usr/share/vulkan/implicit_layer.d/nvidia_layers.json \
+             /usr/share/glvnd/egl_vendor.d/10_nvidia.json \
+             /etc/OpenCL/vendors/nvidia.icd; do
+        if [[ -f "${f}.nvidia-driver-injector-disabled" ]] || [[ -f "${f}.aorus-disabled" ]]; then
+            fail_ "disabled: $f (breaks RTX 2070 graphics on this dual-GPU host)"
+        elif [[ -f "$f" ]]; then
+            ok "active: $f"
+        else
+            info "$f not present (vendor may not have shipped this ICD)"
+        fi
+    done
+else
+    for f in /usr/share/vulkan/icd.d/nvidia_icd.x86_64.json \
+             /usr/share/vulkan/implicit_layer.d/nvidia_layers.json \
+             /usr/share/glvnd/egl_vendor.d/10_nvidia.json \
+             /etc/OpenCL/vendors/nvidia.icd; do
+        if [[ -f "${f}.nvidia-driver-injector-disabled" ]]; then
+            ok "disabled: $f"
+        elif [[ -f "${f}.aorus-disabled" ]]; then
+            warn "$f disabled by aorus-egpu (legacy naming; effectively disabled)"
+        elif [[ -f "$f" ]]; then
+            warn "$f present + active (not disabled)"
+        else
+            info "$f not present (vendor may not have shipped this ICD)"
+        fi
+    done
+fi
 
 # ============================================================================
 section "10. Recent kernel error signals (since current module load)"

@@ -74,7 +74,7 @@ index 0cb7220c..c02a9975 100644
  #if NV_IS_EXPORT_SYMBOL_GPL_iommu_dev_disable_feature
  #if defined(CONFIG_IOMMU_SVA) && \
      (defined(NV_IOASID_GET_PRESENT) || defined(NV_MM_PASID_DROP_PRESENT))
-@@ -2851,36 +2875,75 @@ extern struct dev_pm_ops nv_pm_ops;
+@@ -2851,36 +2875,89 @@ extern struct dev_pm_ops nv_pm_ops;
  #endif
  
  /*
@@ -122,6 +122,20 @@ index 0cb7220c..c02a9975 100644
 +    const char *reason = "?";
 +    pci_ers_result_t result;
 +    const char *result_str;
++
++    if (!tb_egpu_pci_is_gb202(pci_dev))
++    {
++        if (state == pci_channel_io_normal)
++        {
++            pci_info(pci_dev,
++                     "AER: error_detected (non-fatal, non-GB202) -> CAN_RECOVER\n");
++            return PCI_ERS_RESULT_CAN_RECOVER;
++        }
++        pci_warn(pci_dev,
++                 "AER: error_detected (state=%d, non-GB202) -> DISCONNECT\n",
++                 (int)state);
++        return PCI_ERS_RESULT_DISCONNECT;
++    }
 +
 +    if (!s_error_detected_logged)
 +    {
@@ -171,7 +185,7 @@ index 0cb7220c..c02a9975 100644
              /*
               * v4 sink primitive: dispatch into the C5
               * cleanupGpuLostStateAtomic via the new rm_ entry point so
-@@ -2890,60 +2953,91 @@ nv_pci_error_detected(struct pci_dev *pci_dev, pci_channel_state_t state)
+@@ -2890,60 +2967,99 @@ nv_pci_error_detected(struct pci_dev *pci_dev, pci_channel_state_t state)
               * path). The NV_GPU_LOST_DETECTOR_* macros mirror
               * nv_gpu_lost_detector_t from
               * src/nvidia/inc/kernel/gpu/nv-gpu-lost.h.
@@ -236,6 +250,8 @@ index 0cb7220c..c02a9975 100644
  static pci_ers_result_t nv_pci_mmio_enabled(struct pci_dev *pci_dev)
  {
 -    pci_info(pci_dev, "AER: mmio_enabled -> RECOVERED\n");
++    if (!tb_egpu_pci_is_gb202(pci_dev))
++        return PCI_ERS_RESULT_RECOVERED;
 +    nv_printf(NV_DBG_ERRORS,
 +              "tb_egpu recover: mmio_enabled callback fired on %s\n",
 +              pci_name(pci_dev));
@@ -257,6 +273,8 @@ index 0cb7220c..c02a9975 100644
   */
 +static void nv_pci_cor_error_detected(struct pci_dev *pci_dev)
 +{
++    if (!tb_egpu_pci_is_gb202(pci_dev))
++        return;
 +    nv_printf(NV_DBG_ERRORS,
 +              "tb_egpu recover: cor_error_detected callback fired on %s\n",
 +              pci_name(pci_dev));
@@ -268,6 +286,8 @@ index 0cb7220c..c02a9975 100644
  {
 -    pci_warn(pci_dev, "AER: slot_reset with no reinit path -> DISCONNECT\n");
 -    return PCI_ERS_RESULT_DISCONNECT;
++    if (!tb_egpu_pci_is_gb202(pci_dev))
++        return PCI_ERS_RESULT_RECOVERED;
 +    return tb_egpu_recover_slot_reset(pci_dev);
  }
  
@@ -275,6 +295,8 @@ index 0cb7220c..c02a9975 100644
  static void nv_pci_resume(struct pci_dev *pci_dev)
  {
 -    pci_info(pci_dev, "AER: resume\n");
++    if (!tb_egpu_pci_is_gb202(pci_dev))
++        return;
 +    tb_egpu_recover_slot_reset_resume(pci_dev);
  }
  
@@ -296,7 +318,7 @@ new file mode 100644
 index 00000000..4f7cb8cd
 --- /dev/null
 +++ b/kernel-open/nvidia/nv-tb-egpu-recover.c
-@@ -0,0 +1,884 @@
+@@ -0,0 +1,898 @@
 +/*
 + * SPDX-FileCopyrightText: nvidia-driver-injector contributors
 + * SPDX-License-Identifier: MIT
@@ -358,6 +380,12 @@ index 00000000..4f7cb8cd
 +#include <linux/types.h>
 +#include <linux/vmalloc.h>
 +#include <linux/workqueue.h>
++
++bool tb_egpu_pci_is_gb202(const struct pci_dev *pdev)
++{
++    return pdev && pdev->vendor == PCI_VENDOR_ID_NVIDIA &&
++           pdev->device == 0x2b85;
++}
 +
 +/* -----------------------------------------------------------------------
 + * Module parameters
@@ -1108,6 +1136,14 @@ index 00000000..4f7cb8cd
 +        return 0;
 +    }
 +
++    if (!tb_egpu_pci_is_gb202(nvl->pci_dev))
++    {
++        NV_DEV_PRINTF(NV_DBG_INFO, nv,
++            "tb_egpu recover: skipped (not GB202 10de:2b85)\n");
++        nvl->recover = NULL;
++        return 0;
++    }
++
 +    st = kzalloc(sizeof(*st), GFP_KERNEL);
 +    if (!st)
 +    {
@@ -1186,7 +1222,7 @@ new file mode 100644
 index 00000000..355c5897
 --- /dev/null
 +++ b/kernel-open/nvidia/nv-tb-egpu-recover.h
-@@ -0,0 +1,228 @@
+@@ -0,0 +1,229 @@
 +/*
 + * SPDX-FileCopyrightText: nvidia-driver-injector contributors
 + * SPDX-License-Identifier: MIT
@@ -1332,6 +1368,7 @@ index 00000000..355c5897
 +/* Lifecycle */
 +int  tb_egpu_recover_init(nv_linux_state_t *nvl);
 +void tb_egpu_recover_stop(nv_linux_state_t *nvl);
++bool tb_egpu_pci_is_gb202(const struct pci_dev *pdev);
 +
 +/*
 + * Probe-time WPR2-stuck detection.

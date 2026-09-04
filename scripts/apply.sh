@@ -12,13 +12,17 @@
 #   2. Set kernel cmdline via grubby (asks before reboot).
 #   3. Verify kernel-devel is installed for $(uname -r).
 #   4. Install /etc/modprobe.d/nvidia-driver-injector.conf
-#      (production NVreg options including NVreg_TbEgpuRecoverEnable=1).
+#      (dual-GPU-safe NVreg options including NVreg_TbEgpuRecoverEnable=1).
+#      On eGPU-only hosts, also install the compute-only overlay
+#      (blacklist / nvidia_drm modeset=0). Never install that overlay
+#      when an internal NVIDIA GPU is present.
 #   5. Install + enable
 #      /etc/systemd/system/nvidia-driver-injector-bridge-link-cap.service
 #      (runs Before=docker.service to apply Lever H17 cap).
 #   6. Install /etc/udev/rules.d/79-nvidia-driver-injector.rules
 #      (group permissions on /dev/nvidia*).
-#   7. Disable Vulkan/EGL/OpenCL ICD entries (compute-only posture).
+#   7. Disable Vulkan/EGL/OpenCL ICD entries (eGPU-only compute-only
+#      posture). Skipped when an internal NVIDIA GPU is present.
 #   8. Ensure 'gpu' UNIX group exists (used as the device-file
 #      access group) and rewrite NVreg_DeviceFileGID in modprobe.d to
 #      match the host's actual GID.
@@ -263,21 +267,18 @@ fi
 # ===========================================================================
 step "4/10 /etc/modprobe.d/nvidia-driver-injector.conf"
 
-# Clean up the aorus-5090-egpu transition stub if it exists. remove.sh
-# from that repo installs zz-aorus-egpu-blacklist.conf as a temporary
-# guard against stock nvidia auto-loading during the gap between
-# remove.sh and the next install. Our nvidia-driver-injector.conf
-# provides equivalent blacklist coverage, so the transition stub is
-# now redundant.
+# Clean up the aorus-5090-egpu transition stub if it exists. Dual-GPU
+# hosts must not keep a leftover nvidia blacklist.
 transition_stub="/etc/modprobe.d/zz-aorus-egpu-blacklist.conf"
 if [[ -f "$transition_stub" ]]; then
     yellow "  found aorus-5090-egpu transition blacklist stub — removing"
-    yellow "  (this repo's modprobe.d provides equivalent coverage)"
     act "rm -f ${transition_stub}"
 fi
 
 src="${HOST_FILES}/etc/modprobe.d/nvidia-driver-injector.conf"
 dst="/etc/modprobe.d/nvidia-driver-injector.conf"
+overlay_src="${HOST_FILES}/etc/modprobe.d/nvidia-driver-injector-compute-only.conf"
+overlay_dst="/etc/modprobe.d/nvidia-driver-injector-compute-only.conf"
 
 if [[ "$NO_ACT" -eq 1 ]]; then
     printf '  [DRY-RUN] install %s -> %s (with NVreg_DeviceFileGID=%s)\n' \
@@ -286,6 +287,19 @@ else
     sed "s/NVreg_DeviceFileGID=968/NVreg_DeviceFileGID=${GPU_GID}/g" "$src" > "$dst"
     chmod 0644 "$dst"
     green "  installed ${dst} (NVreg_DeviceFileGID=${GPU_GID})"
+fi
+
+if platform_has_non_gb202_nvidia; then
+    yellow "  internal NVIDIA GPU present — not installing compute-only overlay"
+    yellow "  (no blacklist / nvidia_drm modeset=0 / RmForceExternalGpu)"
+    if [[ "$NO_ACT" -eq 1 ]]; then
+        printf '  [DRY-RUN] rm -f %s\n' "$overlay_dst"
+    else
+        rm -f "$overlay_dst"
+    fi
+else
+    yellow "  eGPU-only host — installing compute-only overlay (autoload blocked)"
+    act "install -m 0644 -D ${overlay_src} ${overlay_dst}"
 fi
 
 # ===========================================================================

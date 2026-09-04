@@ -104,6 +104,7 @@ Do not run Stage 4B without reading [`r610-test-plan.md`](r610-test-plan.md).
 | `tests/test-intent-lint.sh` | `tools/intent-lint.sh` — the patch-intent + patch-review frontmatter schema (`docs/patch-intent-schema.md`). |
 | `tests/test-nvidia-version.sh` | `nvidia-version.env` vs Dockerfile ARG, tag validation, image-tag literals. |
 | `tests/test-platform.sh` | Fedora 44 / 7.1 helpers, GB202 discovery, BAR1, compute-only ICD plan. |
+| `tests/test-multigpu-layer1.sh` | Dual-GPU Layer-1: no eGPU-only globals in base conf, overlay gated, 2070 vs 5090 dry-run report. |
 | `tests/test-production-manifest.sh` | 19-row apply order, patch files, R610 literals, no RC-watchdog patch. |
 | `tests/test-r610-scripts.sh` | install/remove dry-run; Stage 4B scripts refuse without a freeze flag. |
 | `tools/validate-patchset.sh` | End-to-end: clean checkout → compose → apply → `make modules`. |

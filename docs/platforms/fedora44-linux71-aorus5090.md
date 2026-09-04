@@ -73,12 +73,31 @@ See [`../r610-watchdog-analysis.md`](../r610-watchdog-analysis.md).
 
 ## Dual GPU / compute-only
 
-- Keep the RTX 2070 as the GNOME display GPU.
-- Do not run `apply.sh` ICD disable on this host (script skips it when a
-  non-GB202 NVIDIA device exists).
-- HDMI audio unbind stays scoped to `10de:22e8`.
-- `RmForceExternalGpu=1` is a **global** module param — review before
-  loading a patched module here.
+This workstation has an internal RTX 2070 **and** the GB202 eGPU. One
+`nvidia.ko` binds every NVIDIA GPU, so Layer 1 must not use the NUC-era
+eGPU-only globals.
+
+| Mechanism | Dual-GPU (this host) | eGPU-only overlay |
+|---|---|---|
+| `blacklist nvidia*` / `install nvidia* /bin/false` | **not installed** | `nvidia-driver-injector-compute-only.conf` |
+| `options nvidia_drm modeset=0 fbdev=0` | **not installed** | overlay only |
+| Vulkan/EGL/OpenCL ICD rename | **skipped** (`--skip-icd`) | applied |
+| `RmForceExternalGpu=1` | **removed** (not an R610 open-module key; would be module-global) | not used |
+| `NVreg_TbEgpuRecoverEnable=1` | kept (master switch) | kept |
+| A2 Q-watchdog / A3 recovery / AER | **GB202 `10de:2b85` only** | same |
+| udev `80-…-disable-audio.rules` | `10de:22e8` only | same |
+| Bridge LnkCtl2 | parent of `10de:2b85` | same |
+| `NVreg_DynamicPowerManagement=0` | global (2070 loses driver RTD3) | same |
+| `PreserveVideoMemoryAllocations=0` | **not in base conf** | overlay |
+
+`apply.sh` installs the compute-only overlay **only** when
+`platform_has_non_gb202_nvidia` is false. Dual-GPU hosts get the base
+conf alone. Display sessions must be in group `gpu` (`MODE=0660`).
+
+`RmForceExternalGpu` is not present in vanilla or patched 610.57.04
+open-gpu-kernel-modules (no C symbol, no `nv-kernel.o` string). External
+classification is E1/A9 (`os_pci_is_thunderbolt_attached` /
+`pdev->untrusted`). Do not re-add a force-external registry key.
 
 ## Layer 1 / Layer 2
 
