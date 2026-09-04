@@ -17,9 +17,9 @@ Path B split.
 sudo /root/nvidia-driver-injector/scripts/apply.sh
 
 # 2. Build the image + import to containerd
-docker build -t apnex/nvidia-driver-injector:595.71.05-aorus.14 \
+docker build -t apnex/nvidia-driver-injector:610.57.04-apnex.1 \
     /root/nvidia-driver-injector
-docker save apnex/nvidia-driver-injector:595.71.05-aorus.14 \
+docker save apnex/nvidia-driver-injector:610.57.04-apnex.1 \
     | sudo k3s ctr images import -
 
 # 3. Apply the DaemonSet
@@ -29,7 +29,7 @@ kubectl rollout status -n kube-system ds/nvidia-driver-injector
 # 4. Verify
 kubectl get nodes -L nvidia.driver/state,nvidia.driver/version
 # NAME   STATE   VERSION
-# obpc   ready   595.71.05-aorus.14
+# obpc   ready   610.57.04-apnex.1
 ```
 
 The DaemonSet pod's entrypoint runs the same five steps the docker-compose

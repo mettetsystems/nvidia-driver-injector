@@ -18,25 +18,33 @@
 # tag-bump path) is intentionally NOT implemented here -- see
 # docs/superpowers/specs/2026-05-22-dynamic-patch-composition-design.md.
 #
-# Usage: regen-base-patches.sh [--fork DIR] [--tag TAG]
+# Usage: regen-base-patches.sh [--fork DIR] [--tag TAG|--nvidia-tag TAG]
 #   --fork  default: $FORK_REPO or /root/open-gpu-kernel-modules
-#   --tag   default: NVIDIA_OPEN_TAG from the injector Dockerfile
+#   --tag   default: NVIDIA_OPEN_TAG from nvidia-version.env (then Dockerfile)
 set -eu
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 . "$repo_root/tools/lib/manifest.sh"
+. "$repo_root/tools/lib/nvidia-version.sh"
 
 fork="${FORK_REPO:-/root/open-gpu-kernel-modules}"
 tag=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --fork) fork="$2"; shift 2 ;;
-        --tag)  tag="$2"; shift 2 ;;
+        --tag|--nvidia-tag) tag="$2"; shift 2 ;;
         *) echo "regen: unknown arg '$1'" >&2; exit 2 ;;
     esac
 done
-[ -n "$tag" ] || tag="$(awk -F= '/^ARG NVIDIA_OPEN_TAG=/{print $2}' "$repo_root/Dockerfile")"
+if [ -z "$tag" ]; then
+    if nvidia_version_load "$repo_root" 2>/dev/null; then
+        tag="$NVIDIA_OPEN_TAG"
+    else
+        tag="$(nvidia_dockerfile_tag "$repo_root/Dockerfile" 2>/dev/null || true)"
+    fi
+fi
 [ -n "$tag" ] || { echo "regen: could not determine target tag" >&2; exit 1; }
+nvidia_version_validate_tag "$tag" || exit 1
 [ -d "$fork/.git" ] || { echo "regen: fork repo not found at $fork" >&2; exit 1; }
 
 manifest="$repo_root/patches/manifest"

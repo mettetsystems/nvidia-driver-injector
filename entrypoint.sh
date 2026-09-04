@@ -181,7 +181,7 @@ node_label_should_run() {
 
 cmd_label_node() {
     node_label_should_run || return 0
-    local version="$1"   # e.g. 595.71.05-aorus.14
+    local version="$1"   # e.g. 610.57.04-apnex.1
     log "labelling node ${NODE_NAME} (nvidia.driver/state=ready, version=${version}) ..."
     if kubectl label nodes "$NODE_NAME" \
             "nvidia.driver/state=ready" \
@@ -574,9 +574,9 @@ KO_DRM="/src/nvidia-open-gpu-kernel-modules/kernel-open/nvidia-drm.ko"
 # The kernel's request_firmware() looks for GSP firmware at
 #   /lib/firmware/nvidia/<NV_VERSION_STRING>/gsp_ga10x.bin
 # where <NV_VERSION_STRING> is whatever -DNV_VERSION_STRING the module was
-# built with (e.g. "595.71.05-aorus.13"). Upstream ships the firmware at the
-# unmodified "595.71.05" path, so any project version bump needs a symlink:
-#   /lib/firmware/nvidia/<our-version> → 595.71.05
+# built with (e.g. "610.57.04-apnex.1"). Upstream ships the firmware at the
+# unmodified NVIDIA_OPEN_TAG path, so any project version bump needs a symlink:
+#   /lib/firmware/nvidia/<our-version> → ${NVIDIA_OPEN_TAG}
 #
 # Two steps, both idempotent:
 #   (a) ensure the upstream firmware base dir is populated — re-supply the
@@ -584,13 +584,16 @@ KO_DRM="/src/nvidia-open-gpu-kernel-modules/kernel-open/nvidia-drm.ko"
 #       lost them. The kernel reads firmware from the *host* /lib/firmware
 #       (bind-mounted rw), so the blobs must physically be on the host.
 #       This is the durability fix for the 2026-05-22 nvidia-kmod-common
-#       incident — removing that RPM deleted /lib/firmware/nvidia/595.71.05.
+#       incident — removing that RPM deleted /lib/firmware/nvidia/<tag>.
 #   (b) extract the version from the just-built .ko (single source of truth)
 #       and ensure the per-version symlink exists.
-fw_version=$(modinfo "$KO_NVIDIA" 2>/dev/null | awk '/^version:/ {print $2; exit}')
+    fw_version=$(modinfo "$KO_NVIDIA" 2>/dev/null | awk '/^version:/ {print $2; exit}')
 if [[ -n "$fw_version" ]]; then
     fw_base="/lib/firmware/nvidia"
-    fw_target="$fw_base/595.71.05"
+    # Upstream .run installs GSP blobs under the unmodified driver version
+    # (NVIDIA_OPEN_TAG / NVIDIA_NVID_VERSION), not the A5 -apnex.N stamp.
+    fw_upstream="${NVIDIA_OPEN_TAG:?NVIDIA_OPEN_TAG must be set in the image}"
+    fw_target="$fw_base/${fw_upstream}"
     fw_link="$fw_base/$fw_version"
     fw_stash="/opt/nvidia-firmware"   # GSP blobs baked into this image
 
@@ -607,15 +610,15 @@ if [[ -n "$fw_version" ]]; then
     done
 
     # (b) per-version symlink.
-    if [[ "$fw_version" == "595.71.05" ]]; then
+    if [[ "$fw_version" == "$fw_upstream" ]]; then
         : # vanilla version — no symlink needed
     elif [[ ! -d "$fw_target" ]]; then
         warn "firmware base ${fw_target} missing and no in-image copy — GSP load will fail."
     elif [[ -L "$fw_link" || -d "$fw_link" ]]; then
         log "firmware symlink ✓ — ${fw_link} present"
     else
-        if ln -sfn "595.71.05" "$fw_link" 2>/dev/null; then
-            log "firmware symlink ✓ — created ${fw_link} → 595.71.05"
+        if ln -sfn "$fw_upstream" "$fw_link" 2>/dev/null; then
+            log "firmware symlink ✓ — created ${fw_link} → ${fw_upstream}"
         else
             warn "could not create ${fw_link} (is /lib/firmware bind-mounted rw?)
        GSP load will fail with -ENOENT until this symlink exists."

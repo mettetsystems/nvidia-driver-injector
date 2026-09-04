@@ -14,7 +14,8 @@
 #
 # Prerequisites on host (handled by `sudo ./scripts/apply.sh`
 # in this repo — see docs/architecture.md):
-#   - kernel cmdline tuning (iommu=off, host_reset=false, etc.)
+#   - kernel cmdline tuning (see docs/platforms/; do not run apply.sh
+#     cmdline defaults against a Fedora 44 + 7.1 host — use --skip-cmdline)
 #   - kernel-devel installed for $(uname -r)
 #   - /etc/modprobe.d/nvidia-driver-injector.conf installed (production
 #     NVreg options including NVreg_TbEgpuRecoverEnable=1)
@@ -30,7 +31,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: apnex/nvidia-driver-injector:595.71.05-aorus.14
+    image: apnex/nvidia-driver-injector:610.57.04-apnex.1
     container_name: nvidia-driver-injector
     privileged: true
     pid: host
@@ -55,7 +56,7 @@ services:
       # for chgrp on /dev/nvidia* (Gap #4).
       - /etc/group:/etc/group:ro
       # Host /lib/firmware writable so the entrypoint can create the
-      # versioned firmware symlink ($NVIDIA_VERSION → 595.71.05) for
+      # versioned firmware symlink ($NVIDIA_VERSION → $NVIDIA_OPEN_TAG) for
       # the kernel's request_firmware path. Without this, every
       # version-bump patch needs a manual symlink. See entrypoint.sh
       # "firmware path link" step.

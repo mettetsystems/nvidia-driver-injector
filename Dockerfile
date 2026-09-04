@@ -22,10 +22,12 @@
 
 FROM debian:13-slim
 
-# Pinned upstream tag — the patches were authored against this exact version.
-# Bumping the tag requires re-validating the patches apply cleanly.
-ARG NVIDIA_OPEN_TAG=595.71.05
+# Pinned upstream tag. Keep in sync with nvidia-version.env
+# (tests/test-nvidia-version.sh enforces ARG == NVIDIA_OPEN_TAG).
+# Override at build time: --build-arg NVIDIA_OPEN_TAG=610.57.04
+ARG NVIDIA_OPEN_TAG=610.57.04
 ENV NVIDIA_OPEN_TAG=${NVIDIA_OPEN_TAG}
+ENV NVIDIA_DRIVER_VERSION=${NVIDIA_OPEN_TAG}
 
 # Install build toolchain + kmod (modprobe/insmod) + curl + git for upstream fetch.
 # No kernel-devel here — the host's /lib/modules/$(uname -r)/build is bind-mounted
@@ -69,9 +71,11 @@ RUN git clone --depth 1 -b ${NVIDIA_OPEN_TAG} \
     install -m 4755 _out/Linux_$(uname -m)/nvidia-modprobe /usr/bin/nvidia-modprobe && \
     cd / && rm -rf /tmp/nvidia-modprobe
 
-# Extract nvidia-smi + libnvidia-ml.so from NVIDIA's proprietary 595.71.05
-# tarball. We use the OPEN kernel modules (above) but the userspace tools
-# (nvidia-smi, NVML library) are closed-source and come from the .run bundle.
+# Extract nvidia-smi + libnvidia-ml.so from NVIDIA's proprietary .run
+# matching NVIDIA_OPEN_TAG. We use the OPEN kernel modules (above) but
+# the userspace tools (nvidia-smi, NVML library) are closed-source and
+# come from the .run bundle. Kernel module, userspace, and GSP firmware
+# MUST stay version-aligned — never mix an R595 .ko with R610 userspace.
 # NVIDIA's official position is that the open kernel modules use the same
 # userspace tools as the proprietary build — they share the NVML interface.
 #

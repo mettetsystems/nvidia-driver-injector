@@ -3,23 +3,33 @@
 # open-gpu-kernel-modules tree at the target tag, applies the composed
 # patch set, and runs `make modules`.
 #
-# Usage: validate-patchset.sh [--fork DIR] [--tag TAG] [--kernel KVER]
+# Usage: validate-patchset.sh [--fork DIR] [--tag TAG|--nvidia-tag TAG] [--kernel KVER]
 set -eu
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib/nvidia-version.sh
+. "$repo_root/tools/lib/nvidia-version.sh"
+
 fork="${FORK_REPO:-/root/open-gpu-kernel-modules}"
 tag=""
 kver="$(uname -r)"
 while [ $# -gt 0 ]; do
     case "$1" in
         --fork)   fork="$2"; shift 2 ;;
-        --tag)    tag="$2"; shift 2 ;;
+        --tag|--nvidia-tag) tag="$2"; shift 2 ;;
         --kernel) kver="$2"; shift 2 ;;
         *) echo "validate: unknown arg '$1'" >&2; exit 2 ;;
     esac
 done
-[ -n "$tag" ] || tag="$(awk -F= '/^ARG NVIDIA_OPEN_TAG=/{print $2}' "$repo_root/Dockerfile")"
+if [ -z "$tag" ]; then
+    if nvidia_version_load "$repo_root" 2>/dev/null; then
+        tag="$NVIDIA_OPEN_TAG"
+    else
+        tag="$(nvidia_dockerfile_tag "$repo_root/Dockerfile" 2>/dev/null || true)"
+    fi
+fi
 [ -n "$tag" ] || { echo "validate: could not determine target tag" >&2; exit 1; }
+nvidia_version_validate_tag "$tag" || exit 1
 
 ksrc="/lib/modules/$kver/build"
 [ -d "$ksrc" ]      || { echo "validate: kernel build dir $ksrc not found" >&2; exit 1; }
